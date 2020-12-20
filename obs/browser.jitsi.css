@@ -1,0 +1,17 @@
+/*
+ * Example URL:
+ * https://meet.jit.si/test#config.prejoinPageEnabled=false
+ *
+ * Use this css if you wanna embed a friend via jit.si to your OBS stream. Just share the link with your friend...
+ */
+
+
+
+body { background-color: rgba(0, 0, 0, 0); margin: 0px auto; overflow: hidden; }
+#new-toolbox { display: none; }
+#sideToolbarContainer  { display: none; }
+.videocontainer > .subject { display: none; }
+div.watermark.leftwatermark { display: none; }
+#filmstripRemoteVideosContainer { display: none;}
+.large-video-labels { display: none; }
+.filmstrip { display: none !important;}
