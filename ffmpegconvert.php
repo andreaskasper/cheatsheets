@@ -1,4 +1,3 @@
-#!/usr/bin/env php
 <?php
 
 if (php_sapi_name() != 'cli') die("Not in CLI".PHP_EOL);
@@ -48,22 +47,22 @@ switch (strtolower($covert)) {
         break;
 	case "720p":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.720p.'.$fileinfo["extension"].'" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:1080" "'.$fileinfo["filename"].'.720p.'.$fileinfo["extension"].'" ';
         exec($cmd);
         break;
 	case "480p":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.480p.'.$fileinfo["extension"].'" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:480" "'.$fileinfo["filename"].'.480p.'.$fileinfo["extension"].'" ';
         exec($cmd);
         break;
 	case "360p":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.360p.'.$fileinfo["extension"].'" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:360"  "'.$fileinfo["filename"].'.360p.'.$fileinfo["extension"].'" ';
         exec($cmd);
         break;
 	case "240p":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.240p.'.$fileinfo["extension"].'" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:240"  "'.$fileinfo["filename"].'.240p.'.$fileinfo["extension"].'" ';
         exec($cmd);
         break;
 	case "1080p.mp4":
@@ -73,22 +72,22 @@ switch (strtolower($covert)) {
         break;
 	case "720p.mp4":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.720p.mp4" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:720" -movflags +faststart "'.$fileinfo["filename"].'.720p.mp4" ';
         exec($cmd);
         break;
 	case "480p.mp4":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.480p.mp4" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:480" -movflags +faststart "'.$fileinfo["filename"].'.480p.mp4" ';
         exec($cmd);
         break;
 	case "360p.mp4":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.360p.mp4" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:360" -movflags +faststart "'.$fileinfo["filename"].'.360p.mp4" ';
         exec($cmd);
         break;
 	case "240p.mp4":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
-        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.240p.mp4" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:240" -movflags +faststart "'.$fileinfo["filename"].'.240p.mp4" ';
         exec($cmd);
         break;
     case "hls":
@@ -176,6 +175,8 @@ class app {
 	}
 	
 	public static function self_update() {
-		copy("",__FILE__);
+		$str = file_get_contents("https://raw.githubusercontent.com/andreaskasper/cheatsheets/master/ffmpegconvert.php");
+		if (System::getOS() == System::OS_WIN) $str = str_replace("#!/usr/bin/env php","", $str);
+		file_put_contents(__FILE__, $str);
 	}
 }
