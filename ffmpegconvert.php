@@ -197,6 +197,7 @@ class app {
 		$str = file_get_contents("https://raw.githubusercontent.com/andreaskasper/cheatsheets/master/ffmpegconvert.php");
 		if (System::getOS() == System::OS_WIN) $str = str_replace("#!/usr/bin/env php","", $str);
 		file_put_contents(__FILE__, $str);
+        exit();
 	}
 
     public static function is_docker_installed() : bool {
