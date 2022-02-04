@@ -1,10 +1,11 @@
+#!/usr/bin/env php
 <?php
 
 if (php_sapi_name() != 'cli') die("Not in CLI".PHP_EOL);
 $version = explode('.', PHP_VERSION);
 if ($version < 7) die("php Version is lower than 7.0".PHP_EOL);
 
-if (!empty($argv[1]) AND $argv[1] == "--update") app:self_update();
+if (!empty($argv[1]) AND $argv[1] == "--update") app::self_update();
 if (empty($argv[2]) OR in_array($argv[1], array("-h","--help"))) app::show_help();
 
 $file = $argv[1];
@@ -21,12 +22,12 @@ if (!file_exists($file)) die("File ".$file." doesn not exists".PHP_EOL);
 
 switch (strtolower($covert)) {
     case "web":
-        $cmd  = 'ffmpeg -i "'.$file.'" ';
+        $cmd  = '-i "'.$file.'" ';
         $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.1080p.mp4" ';
         $cmd .= ' -threads 0 -vf "scale=-2:720" -movflags +faststart "'.$fileinfo["filename"].'.720p.mp4" ';
         $cmd .= ' -threads 0 -vf "scale=-2:480" -movflags +faststart "'.$fileinfo["filename"].'.480p.mp4" ';
         $cmd .= ' -threads 0 -vf "scale=-2:240" -movflags +faststart "'.$fileinfo["filename"].'.240p.mp4" ';
-        exec($cmd);
+        app::ffmpeg($cmd);
         break;
     case "webipfs":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
@@ -151,7 +152,18 @@ class System {
 
 }
 
+class Datei {
+    private $_file;
+    public function __construct($file = null) {
+        if (!empty($file)) $this->_file = realpath($file);
+    }
+}
+
 class app {
+
+    private static $__is_docker_installed = null;
+    private static $__is_ipfs_installed = null;
+
 	public static function show_help() {
 		echo('Example:'.PHP_EOL);
 		echo('ffmpegconvert <File> <convert>'.PHP_EOL);
@@ -173,10 +185,25 @@ class app {
 		echo('[*] 240p.mp4   Konvertiert ein Video in ein 240p mp4 Video'.PHP_EOL);
 		exit();
 	}
+
+    public static function ffmpeg(string $parameters) : string {
+        //if (self::is_docker_installed()) $cmd = 'docker pull jrottenberg/ffmpeg && docker run --rm jrottenberg/ffmpeg '; else 
+        $cmd = 'ffmpeg ';
+        exec($cmd.$parameters, $a);
+        return implode(PHP_EOL, $a);
+    }
 	
 	public static function self_update() {
 		$str = file_get_contents("https://raw.githubusercontent.com/andreaskasper/cheatsheets/master/ffmpegconvert.php");
 		if (System::getOS() == System::OS_WIN) $str = str_replace("#!/usr/bin/env php","", $str);
 		file_put_contents(__FILE__, $str);
 	}
+
+    public static function is_docker_installed() : bool {
+        if (is_null(self::$__is_docker_installed)) {
+            exec("docker --version", $a);
+            self::$__is_docker_installed = (strpos($a[0], "Docker version ") !== false);
+        }
+        return self::$__is_docker_installed;
+    }
 }
