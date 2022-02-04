@@ -33,6 +33,22 @@ switch (strtolower($covert)) {
 	$cmd .= ' -threads 0 -vf "scale=-2:240" -movflags +faststart "'.$fileinfo["filename"].'.240p.webm" ';
         app::ffmpeg($cmd);
         break;
+    case "mp4":
+        $cmd  = '-i "'.$file.'" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.1080p.mp4" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:720" -movflags +faststart "'.$fileinfo["filename"].'.720p.mp4" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:480" -movflags +faststart "'.$fileinfo["filename"].'.480p.mp4" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:240" -movflags +faststart "'.$fileinfo["filename"].'.240p.mp4" ';
+        app::ffmpeg($cmd);
+        break;
+    case "webm":
+        $cmd  = '-i "'.$file.'" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.1080p.webm" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:720" -movflags +faststart "'.$fileinfo["filename"].'.720p.webm" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:480" -movflags +faststart "'.$fileinfo["filename"].'.480p.webm" ';
+        $cmd .= ' -threads 0 -vf "scale=-2:240" -movflags +faststart "'.$fileinfo["filename"].'.240p.webm" ';
+        app::ffmpeg($cmd);
+        break;
     case "webipfs":
         $cmd  = 'ffmpeg -i "'.$file.'" ';
         $cmd .= ' -threads 0 -vf "scale=-2:1080" -movflags +faststart "'.$fileinfo["filename"].'.1080p.mp4" ';
@@ -174,9 +190,11 @@ class app {
 		echo(PHP_EOL);
 		echo('Conversions:'.PHP_EOL);
 		echo('[*] hls'.PHP_EOL);
-        echo('[*] hlsipfs'.PHP_EOL);
-        echo('[*] web        Konvertiert ein Video in mehrer webbasierte mp4 Formate'.PHP_EOL);
-        echo('[*] webipfs'.PHP_EOL);
+        	echo('[*] hlsipfs'.PHP_EOL);
+        	echo('[*] web        Konvertiert ein Video in mehrer webbasierte mp4 Formate'.PHP_EOL);
+        	echo('[*] webipfs'.PHP_EOL);
+        	echo('[*] mp4        Konvertiert ein Video in 4 verschiedene mp4 Formate'.PHP_EOL);
+        	echo('[*] webm       Konvertiert ein Video in 4 verschiedene webm Formate'.PHP_EOL);
 		echo('[*] 1080p      Konvertiert ein Video in ein 1080p Video'.PHP_EOL);
 		echo('[*] 720p       Konvertiert ein Video in ein 720p Video'.PHP_EOL);
 		echo('[*] 480p       Konvertiert ein Video in ein 480p Video'.PHP_EOL);
