@@ -1,0 +1,37 @@
+#
+# Docker-Compose file to start and setup a Storj Storagenode
+# 
+# IMPORTANT:
+# At first run, the SETUP Environment variable has to be set to true
+# 
+# Change the other environment variables as wished
+#
+version: "3.7"
+
+services:
+  storj_storagenode:
+    image: storjlabs/storagenode:latest
+    restart: always
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    ports:
+      28967:28967
+    volumes:
+      - ./identity/:/app/identity/
+      - ./data/:/app/config/
+    environment:
+      - SETUP="true"
+      - STORAGE="1000GB"
+      - WALLET="0x10E5c7815CD1d6060D9d66747a6Ea432Bd92E652"
+      - EMAIL="server@goo1.de"
+  storj_exporter:
+    image: anclrii/storj-exporter:latest
+    restart: always
+    depends_on:
+      - storj_storagenode
+    ports:
+      28968:9651
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - STORJ_HOST_ADDRESS=storj_storagenode
