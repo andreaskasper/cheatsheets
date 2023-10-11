@@ -15,7 +15,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     ports:
-      28967:28967
+      - 28967:28967
     volumes:
       - ./identity/:/app/identity/
       - ./data/:/app/config/
@@ -30,7 +30,7 @@ services:
     depends_on:
       - storj_storagenode
     ports:
-      28968:9651
+      - 28968:9651
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     environment:
