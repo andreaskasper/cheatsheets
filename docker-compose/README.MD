@@ -1,4 +1,4 @@
-Docker Compose file templates
+= Docker Compose file templates
 
-storj.yml
+== storj.yml
 Setting up a STORJ Storage Node
