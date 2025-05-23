@@ -7,7 +7,6 @@ TARGET_DIR="/usr/local/bin"
 BASE_URL="https://raw.githubusercontent.com/andreaskasper/cheatsheets/refs/heads/master/mac_scripts"
 
 echo "👨‍💻 Install md5er…"
-echo 'curl -sSf "$BASE_URL/md5er" -o "$TARGET_DIR/md5er" && chmod +x "$TARGET_DIR/md5er"'
 curl -sSf "$BASE_URL/md5er" -o "$TARGET_DIR/md5er" && chmod +x "$TARGET_DIR/md5er"
 
 echo "👨‍💻 Install md5check…"
