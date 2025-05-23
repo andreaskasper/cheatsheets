@@ -38,7 +38,7 @@ if [ ! -d "$TARGET_DIR" ]; then
 fi
 
 # Dateien verarbeiten
-find "$TARGET_DIR" -type f ! -name '*.md5' | while read -r FILE; do
+find "$TARGET_DIR" -type d -name '.*' -prune -o -type f ! -name '*.md5' -print | while read -r FILE; do
   HASH_FILE="${FILE}.md5"
   if [ ! -f "$HASH_FILE" ]; then
     echo "Berechne MD5 für: $FILE"
