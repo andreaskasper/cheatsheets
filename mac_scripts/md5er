@@ -1,0 +1,49 @@
+#!/bin/bash
+
+show_help() {
+  echo "Verwendung: md5er [ORDNER]"
+  echo
+  echo "Erzeugt für alle Dateien im angegebenen Ordner (rekursiv) eine .md5-Datei"
+  echo "mit dem MD5-Hash der Datei. Bestehende .md5-Dateien werden übersprungen."
+  echo
+  echo "Wenn kein ORDNER angegeben ist, wird der aktuelle Ordner verwendet (mit Rückfrage)."
+  echo
+  echo "Optionen:"
+  echo "  --help     Zeigt diese Hilfe an"
+}
+
+# Hilfe anzeigen
+if [[ "$1" == "--help" ]]; then
+  show_help
+  exit 0
+fi
+
+# Ordner festlegen
+if [ -z "$1" ]; then
+  echo "Kein Ordner angegeben. Aktuellen Ordner verwenden: $(pwd)? (y/n)"
+  read -r choice
+  if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
+    echo "Abgebrochen."
+    exit 1
+  fi
+  TARGET_DIR="$(pwd)"
+else
+  TARGET_DIR="$1"
+fi
+
+# Prüfen, ob Ordner existiert
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Fehler: '$TARGET_DIR' ist kein gültiger Ordner."
+  exit 1
+fi
+
+# Dateien verarbeiten
+find "$TARGET_DIR" -type f ! -name '*.md5' | while read -r FILE; do
+  HASH_FILE="${FILE}.md5"
+  if [ ! -f "$HASH_FILE" ]; then
+    echo "Berechne MD5 für: $FILE"
+    md5 -q "$FILE" > "$HASH_FILE"
+  fi
+done
+
+echo "Fertig: $(date '+%Y-%m-%d %H:%M:%S')"

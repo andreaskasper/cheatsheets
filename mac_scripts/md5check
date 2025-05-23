@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Eine Script für Manuel vom Haus des Dokumentarfilms
+# prüft md5 Checksums
+
+# Farben
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+show_help() {
+  echo "Verwendung: md5check [ORDNER]"
+  echo
+  echo "Prüft alle Dateien (außer *.md5) im angegebenen Ordner rekursiv gegen ihre .md5-Dateien."
+  echo "Zeigt Warnung bei fehlender Prüfsumme und Fehler bei Nicht-Übereinstimmung."
+  echo
+  echo "Optionen:"
+  echo "  --help     Zeigt diese Hilfe an"
+}
+
+# Hilfe anzeigen
+if [[ "$1" == "--help" ]]; then
+  show_help
+  exit 0
+fi
+
+# Ordner festlegen
+if [ -z "$1" ]; then
+  echo "Kein Ordner angegeben. Aktuellen Ordner verwenden: $(pwd)? (y/n)"
+  read -r choice
+  if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
+    echo "Abgebrochen."
+    exit 1
+  fi
+  TARGET_DIR="$(pwd)"
+else
+  TARGET_DIR="$1"
+fi
+
+# Prüfen, ob Ordner existiert
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Fehler: '$TARGET_DIR' ist kein gültiger Ordner."
+  exit 1
+fi
+
+# Dateien prüfen
+find "$TARGET_DIR" -type f ! -name '*.md5' | while read -r FILE; do
+  HASH_FILE="${FILE}.md5"
+  if [ ! -f "$HASH_FILE" ]; then
+    echo -e "${YELLOW}[WARN]$(basename "$FILE") - md5 fehlt${NC}"
+  else
+    EXPECTED_HASH=$(cat "$HASH_FILE")
+    CURRENT_HASH=$(md5 -q "$FILE")
+    if [[ "$EXPECTED_HASH" == "$CURRENT_HASH" ]]; then
+      echo -e "${GREEN}✔️ $(basename "$FILE")${NC}"
+    else
+      echo -e "${RED}[ERROR] $(basename "$FILE") - md5 falsch${NC}"
+    fi
+  fi
+done
