@@ -2,6 +2,9 @@
 
 # Eine Script für Manuel vom Haus des Dokumentarfilms
 # prüft md5 Checksums
+# Autor: Andreas Kasper <andreas.kasper@goo1.de>
+# Datum: 2023-10-03
+# Version: 1.0
 
 # Farben
 RED='\033[0;31m'

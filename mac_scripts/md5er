@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Eine Script für Manuel vom Haus des Dokumentarfilms
+# erstellt md5 Checksum Dateien für alle Dateien in einem Ordner
+# und überspringt bereits vorhandene md5 Dateien
+# Autor: Andreas Kasper <andreas.kasper@goo1.de>
+# Datum: 2023-10-03
+# Version: 1.0
+
 show_help() {
   echo "Verwendung: md5er [ORDNER]"
   echo
@@ -20,7 +27,8 @@ fi
 
 # Ordner festlegen
 if [ -z "$1" ]; then
-  echo "Kein Ordner angegeben. Aktuellen Ordner verwenden: $(pwd)? (y/n)"
+  echo "Kein Ordner angegeben."
+  echo "Aktuellen Ordner verwenden: $(pwd)? (y/n)"
   read -r choice
   if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
     echo "Abgebrochen."
@@ -39,11 +47,13 @@ fi
 
 # Dateien verarbeiten
 find "$TARGET_DIR" -type d -name '.*' -prune -o -type f ! -name '*.md5' -print | while read -r FILE; do
-  HASH_FILE="${FILE}.md5"
-  if [ ! -f "$HASH_FILE" ]; then
-    echo "Berechne MD5 für: $FILE"
-    md5 -q "$FILE" > "$HASH_FILE"
-  fi
+    HASH_FILE="${FILE}.md5"
+    if [ ! -f "$HASH_FILE" ]; then
+        echo "🧮 $FILE"
+        md5 -q "$FILE" > "$HASH_FILE"
+    else
+        echo "⬇️ $FILE schon vorhanden"
+    fi
 done
 
 echo "Fertig: $(date '+%Y-%m-%d %H:%M:%S')"
