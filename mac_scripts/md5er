@@ -49,6 +49,10 @@ echo "🕰️ Start: $(date '+%Y-%m-%d %H:%M:%S')"
 
 # Dateien verarbeiten
 find "$TARGET_DIR" -type d -name '.*' -prune -o -type f ! -name '*.md5' -print | while read -r FILE; do
+    BASENAME=$(basename "$FILE")
+    if [[ "$BASENAME" == .* ]]; then
+        continue  # überspringe versteckte Dateien
+    fi
     HASH_FILE="${FILE}.md5"
     if [ ! -f "$HASH_FILE" ]; then
         echo "🧮 $FILE"
