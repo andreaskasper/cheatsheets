@@ -20,12 +20,21 @@ show_help() {
   echo
   echo "Optionen:"
   echo "  --help     Zeigt diese Hilfe an"
+  echo "  update     Führt ein Update auf um das Script zu aktualisieren"
+  echo
+  echo "Version: v0.1.250901"
 }
 
 # Hilfe anzeigen
 if [[ "$1" == "--help" ]]; then
   show_help
   exit 0
+fi
+
+# Wenn das erste Argument "update" ist, führe update-andiscripts.sh aus und beende das Script
+if [[ "$1" == "update" || "$1" == "upgrade" ]]; then
+  ./update-andiscripts.sh
+  exit $?
 fi
 
 # Ordner festlegen
