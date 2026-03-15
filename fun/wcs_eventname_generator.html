@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎰 WCS Event Name Generator</title>
+<link href="https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=Permanent+Marker&family=Press+Start+2P&family=Righteous&family=Russo+One&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --neon-pink: #ff2d7b;
+    --neon-cyan: #00f7ff;
+    --neon-yellow: #ffe600;
+    --neon-green: #39ff14;
+    --neon-purple: #b026ff;
+    --gold: #ffd700;
+    --dark: #0a0a12;
+    --darker: #06060c;
+    --card: #12122a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    min-height: 100vh;
+    background: var(--darker);
+    font-family: 'Righteous', cursive;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow-x: hidden;
+    color: #fff;
+  }
+
+  /* Animated stars background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(1px 1px at 10% 20%, var(--neon-cyan), transparent),
+      radial-gradient(1px 1px at 30% 60%, var(--neon-pink), transparent),
+      radial-gradient(1px 1px at 50% 10%, var(--neon-yellow), transparent),
+      radial-gradient(1px 1px at 70% 80%, var(--neon-green), transparent),
+      radial-gradient(1px 1px at 90% 40%, var(--neon-purple), transparent),
+      radial-gradient(1.5px 1.5px at 15% 85%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 45% 35%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 75% 15%, #fff, transparent),
+      radial-gradient(1px 1px at 85% 65%, var(--neon-cyan), transparent),
+      radial-gradient(1px 1px at 25% 45%, var(--neon-pink), transparent),
+      radial-gradient(1px 1px at 55% 75%, var(--gold), transparent),
+      radial-gradient(1px 1px at 65% 25%, #fff, transparent),
+      radial-gradient(1px 1px at 35% 95%, var(--neon-green), transparent),
+      radial-gradient(1px 1px at 95% 55%, var(--neon-purple), transparent);
+    animation: twinkle 4s ease-in-out infinite alternate;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  @keyframes twinkle {
+    0% { opacity: 0.4; }
+    100% { opacity: 1; }
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 900px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ============= HEADER / MARQUEE ============= */
+  .marquee-wrapper {
+    width: 100%;
+    overflow: hidden;
+    background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple), var(--neon-cyan), var(--neon-green), var(--neon-yellow), var(--neon-pink));
+    background-size: 200% 100%;
+    animation: rainbowBg 3s linear infinite;
+    padding: 6px 0;
+    border-radius: 12px;
+    margin-bottom: 12px;
+  }
+
+  @keyframes rainbowBg {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+
+  .marquee-track {
+    display: flex;
+    animation: marquee 20s linear infinite;
+    white-space: nowrap;
+  }
+
+  .marquee-track span {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    color: var(--dark);
+    padding: 0 30px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  @keyframes marquee {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  /* ============= TITLE ============= */
+  .title-section {
+    text-align: center;
+    margin: 10px 0 20px;
+  }
+
+  .title-section h1 {
+    font-family: 'Bowlby One SC', cursive;
+    font-size: clamp(1.8rem, 5vw, 3.2rem);
+    text-transform: uppercase;
+    background: linear-gradient(135deg, var(--gold), var(--neon-yellow), #fff, var(--gold));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 0 20px rgba(255,215,0,0.5));
+    letter-spacing: 2px;
+    line-height: 1.15;
+  }
+
+  .title-section .subtitle {
+    font-family: 'Permanent Marker', cursive;
+    color: var(--neon-cyan);
+    font-size: clamp(0.75rem, 2vw, 1rem);
+    margin-top: 4px;
+    text-shadow: 0 0 10px var(--neon-cyan), 0 0 30px var(--neon-cyan);
+    letter-spacing: 3px;
+  }
+
+  /* ============= MACHINE BODY ============= */
+  .machine {
+    width: 100%;
+    background: linear-gradient(180deg, #1a1a3e, #0f0f28 40%, #0a0a1e);
+    border: 3px solid var(--neon-pink);
+    border-radius: 24px;
+    padding: clamp(16px, 3vw, 30px);
+    box-shadow:
+      0 0 30px rgba(255,45,123,0.3),
+      0 0 60px rgba(255,45,123,0.15),
+      inset 0 1px 0 rgba(255,255,255,0.05);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .machine::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: conic-gradient(from 0deg, transparent, rgba(255,45,123,0.03), transparent, rgba(0,247,255,0.03), transparent);
+    animation: rotateBg 10s linear infinite;
+    pointer-events: none;
+  }
+
+  @keyframes rotateBg {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ============= REELS AREA ============= */
+  .reels-label {
+    text-align: center;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: var(--neon-yellow);
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    margin-bottom: 10px;
+    text-shadow: 0 0 8px var(--neon-yellow);
+    position: relative;
+    z-index: 1;
+  }
+
+  .reels-container {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 20px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .reel-frame {
+    background: var(--darker);
+    border: 2px solid rgba(255,215,0,0.4);
+    border-radius: 14px;
+    height: 100px;
+    overflow: hidden;
+    position: relative;
+    box-shadow:
+      inset 0 8px 20px rgba(0,0,0,0.7),
+      inset 0 -8px 20px rgba(0,0,0,0.7),
+      0 0 15px rgba(255,215,0,0.15);
+  }
+
+  .reel-frame::before,
+  .reel-frame::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 25px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .reel-frame::before {
+    top: 0;
+    background: linear-gradient(to bottom, var(--darker), transparent);
+  }
+  .reel-frame::after {
+    bottom: 0;
+    background: linear-gradient(to top, var(--darker), transparent);
+  }
+
+  .reel-strip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: transform 0.1s;
+    will-change: transform;
+  }
+
+  .reel-strip .item {
+    height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Russo One', sans-serif;
+    font-size: clamp(0.85rem, 2.2vw, 1.15rem);
+    color: #fff;
+    text-align: center;
+    padding: 0 10px;
+    white-space: nowrap;
+    text-shadow: 0 0 8px rgba(255,255,255,0.3);
+  }
+
+  .plus-sign {
+    font-family: 'Bowlby One SC', cursive;
+    font-size: 1.6rem;
+    color: var(--neon-pink);
+    text-shadow: 0 0 15px var(--neon-pink);
+    padding: 0 6px;
+    user-select: none;
+  }
+
+  /* ============= WIN LINE ============= */
+  .win-line {
+    position: absolute;
+    top: 50%;
+    left: 10px;
+    right: 10px;
+    height: 2px;
+    background: var(--neon-pink);
+    box-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);
+    transform: translateY(-50%);
+    z-index: 5;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  /* ============= RESULT DISPLAY ============= */
+  .result-area {
+    text-align: center;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+  }
+
+  .result-name {
+    font-family: 'Bowlby One SC', cursive;
+    font-size: clamp(1.3rem, 4vw, 2.2rem);
+    background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green), var(--neon-yellow));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-transform: uppercase;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    filter: drop-shadow(0 0 15px rgba(0,247,255,0.4));
+  }
+
+  .result-name.visible {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .result-tagline {
+    font-family: 'Permanent Marker', cursive;
+    font-size: clamp(0.7rem, 1.8vw, 0.95rem);
+    color: var(--neon-purple);
+    text-shadow: 0 0 8px var(--neon-purple);
+    margin-top: 4px;
+    opacity: 0;
+    transition: opacity 0.5s 0.3s;
+  }
+
+  .result-tagline.visible {
+    opacity: 1;
+  }
+
+  /* ============= BUTTON ============= */
+  .pull-section {
+    display: flex;
+    justify-content: center;
+    margin-top: 15px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .pull-btn {
+    font-family: 'Bowlby One SC', cursive;
+    font-size: clamp(1rem, 3vw, 1.5rem);
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    padding: 14px 50px;
+    border: none;
+    border-radius: 60px;
+    cursor: pointer;
+    color: var(--dark);
+    background: linear-gradient(135deg, var(--gold), var(--neon-yellow), #fff4a0, var(--gold));
+    background-size: 200% 200%;
+    animation: shimmer 2s ease-in-out infinite;
+    box-shadow:
+      0 6px 0 #b8960a,
+      0 8px 20px rgba(255,215,0,0.4),
+      0 0 40px rgba(255,215,0,0.2);
+    transition: all 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .pull-btn::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.3) 50%, transparent 70%);
+    animation: btnShine 3s ease-in-out infinite;
+  }
+
+  @keyframes btnShine {
+    0%, 100% { transform: translateX(-100%) rotate(45deg); }
+    50% { transform: translateX(100%) rotate(45deg); }
+  }
+
+  @keyframes shimmer {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  .pull-btn:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 8px 0 #b8960a,
+      0 12px 30px rgba(255,215,0,0.5),
+      0 0 60px rgba(255,215,0,0.3);
+  }
+
+  .pull-btn:active {
+    transform: translateY(4px);
+    box-shadow:
+      0 2px 0 #b8960a,
+      0 4px 10px rgba(255,215,0,0.3);
+  }
+
+  .pull-btn.spinning {
+    pointer-events: none;
+    opacity: 0.6;
+  }
+
+  /* ============= HISTORY ============= */
+  .history-section {
+    width: 100%;
+    margin-top: 25px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .history-header h3 {
+    font-family: 'Permanent Marker', cursive;
+    color: var(--neon-cyan);
+    font-size: 1rem;
+    text-shadow: 0 0 10px rgba(0,247,255,0.4);
+  }
+
+  .clear-btn {
+    font-family: 'Righteous', cursive;
+    font-size: 0.7rem;
+    background: transparent;
+    border: 1px solid rgba(255,45,123,0.4);
+    color: var(--neon-pink);
+    padding: 4px 12px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .clear-btn:hover {
+    background: rgba(255,45,123,0.15);
+    border-color: var(--neon-pink);
+  }
+
+  .history-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 5px;
+  }
+
+  .history-list::-webkit-scrollbar {
+    width: 4px;
+  }
+  .history-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .history-list::-webkit-scrollbar-thumb {
+    background: var(--neon-pink);
+    border-radius: 2px;
+  }
+
+  .history-chip {
+    font-family: 'Righteous', cursive;
+    font-size: 0.72rem;
+    background: rgba(176,38,255,0.12);
+    border: 1px solid rgba(176,38,255,0.3);
+    color: #ddd;
+    padding: 5px 12px;
+    border-radius: 20px;
+    animation: chipIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    white-space: nowrap;
+  }
+
+  @keyframes chipIn {
+    from { opacity: 0; transform: scale(0.7); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* ============= STATS BAR ============= */
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin-top: 20px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: rgba(255,255,255,0.4);
+    position: relative;
+    z-index: 1;
+  }
+
+  .stats-bar .stat-val {
+    color: var(--neon-green);
+    text-shadow: 0 0 5px var(--neon-green);
+  }
+
+  /* ============= FOOTER ============= */
+  footer {
+    margin-top: 30px;
+    padding: 15px;
+    text-align: center;
+    font-size: 0.65rem;
+    color: rgba(255,255,255,0.2);
+    position: relative;
+    z-index: 1;
+  }
+
+  footer a {
+    color: var(--neon-pink);
+    text-decoration: none;
+  }
+
+  /* ============= CONFETTI ============= */
+  .confetti-piece {
+    position: fixed;
+    width: 8px;
+    height: 8px;
+    z-index: 100;
+    pointer-events: none;
+    animation: confettiFall 1.5s ease-in forwards;
+  }
+
+  @keyframes confettiFall {
+    0% { opacity: 1; transform: translateY(0) rotate(0deg) scale(1); }
+    100% { opacity: 0; transform: translateY(100vh) rotate(720deg) scale(0.3); }
+  }
+
+  /* ============= JACKPOT FLASH ============= */
+  .jackpot-flash {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(circle, rgba(255,215,0,0.3), transparent);
+    z-index: 50;
+    pointer-events: none;
+    animation: flashPulse 0.6s ease-out forwards;
+  }
+
+  @keyframes flashPulse {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  /* ============= RESPONSIVE ============= */
+  @media (max-width: 550px) {
+    .reel-frame { height: 80px; }
+    .reel-strip .item { height: 80px; font-size: 0.72rem; }
+    .plus-sign { font-size: 1.1rem; padding: 0 3px; }
+    .pull-btn { padding: 12px 35px; }
+    .stats-bar { gap: 15px; font-size: 7px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- Marquee -->
+  <div class="marquee-wrapper">
+    <div class="marquee-track" id="marquee">
+      <!-- filled by JS -->
+    </div>
+  </div>
+
+  <!-- Title -->
+  <div class="title-section">
+    <h1>WCS Event<br>Name Generator</h1>
+    <div class="subtitle">&#127920; Pull the lever &bull; Name your event &#127920;</div>
+  </div>
+
+  <!-- Machine -->
+  <div class="machine">
+    <div class="reels-label">&#9733; Spin to Generate &#9733;</div>
+
+    <div class="reels-container">
+      <div class="reel-frame" id="reel1"><div class="reel-strip" id="strip1"></div><div class="win-line"></div></div>
+      <div class="plus-sign">+</div>
+      <div class="reel-frame" id="reel2"><div class="reel-strip" id="strip2"></div><div class="win-line"></div></div>
+      <div class="plus-sign">+</div>
+      <div class="reel-frame" id="reel3"><div class="reel-strip" id="strip3"></div><div class="win-line"></div></div>
+    </div>
+
+    <div class="result-area">
+      <div class="result-name" id="resultName">??? ??? ???</div>
+      <div class="result-tagline" id="resultTagline"></div>
+    </div>
+
+    <div class="pull-section">
+      <button class="pull-btn" id="pullBtn" onclick="spin()">&#127920; SPIN!</button>
+    </div>
+
+    <div class="history-section" id="historySection" style="display:none;">
+      <div class="history-header">
+        <h3>&#128220; Generated Events</h3>
+        <button class="clear-btn" onclick="clearHistory()">Clear</button>
+      </div>
+      <div class="history-list" id="historyList"></div>
+    </div>
+  </div>
+
+  <div class="stats-bar">
+    <span>SPINS: <span class="stat-val" id="spinCount">0</span></span>
+    <span>UNIQUE: <span class="stat-val" id="uniqueCount">0</span></span>
+    <span>COMBOS: <span class="stat-val" id="comboCount">---</span></span>
+  </div>
+
+  <footer>
+    This is a parody / fun tool and has no affiliation with the
+    <a href="https://www.worldsdc.com" target="_blank">World Swing Dance Council</a>.<br>
+    All event names are randomly generated. Any resemblance to actual events is purely coincidental (and hilarious). &#128131;
+  </footer>
+
+</div>
+
+<script>
+// ======================== DATA ========================
+
+const prefixes = [
+  // Real-inspired city/region prefixes
+  "Midnight", "Spooky", "Wild Wild", "Neon", "Cosmic", "Boogie",
+  "Thunder", "Rocket", "Electric", "Golden", "Funky", "Groovy",
+  "Turbo", "Mega", "Ultra", "Atomic", "Capital", "Nordic",
+  "Baltic", "Alpine", "Tropical", "Arctic", "Desert", "Island",
+  "Bayou", "Mountain", "Prairie", "Lakeside", "Riverside", "Oceanside",
+  "Downtown", "Uptown", "Midtown", "Backyard", "Basement", "Rooftop",
+  "Secret", "Grand", "Royal", "Imperial", "Majestic", "Legendary",
+  "Dirty", "Salty", "Swingin'", "Rollin'", "Shakin'", "Groovin'",
+  "Swing", "Open", "Swingtown", "Swing City",
+  // Funny / absurd
+  "Emergency", "Suspicious", "Accidental", "Reluctant", "Chaotic",
+  "Questionable", "Slightly Illegal", "Last Minute", "Overpriced",
+  "Budget", "Discount", "Premium", "Bottomless", "Infinite",
+  "Extra Spicy", "Lukewarm", "Overcooked", "Underrated",
+  "Monday Morning", "3 AM", "Post-Coffee", "Hangover",
+  // Dance puns
+  "Triple Step", "Sugar Push", "Anchor Step", "Whip",
+  "Side Pass", "Tuck Turn", "Inside Roll", "Body Roll",
+  "Connection", "Slot", "Frame", "Musicality"
+];
+
+const middles = [
+  // Real-inspired action/dance words
+  "Swing", "Dance", "Westie", "WCS", "Hustle", "Open",
+  "Groove", "Flow", "Fusion", "Beat", "Rhythm",
+  "Vibe", "Motion", "Step", "Move", "Shuffle",
+  "Bounce", "Glide", "Slide", "Dip", "Spin",
+  "Swirl", "Sway", "Stomp", "Strut", "Slick",
+  // Funny
+  "Flail", "Wobble", "Stumble", "Wiggle", "Jiggle",
+  "Noodle", "Spaghetti", "Pretzel", "Pancake", "Waffle",
+  "Chaos", "Panic", "Mayhem", "Shenanigan", "Ruckus",
+  "Frenzy", "Meltdown", "Throwdown", "Hoedown", "Showdown",
+  "Party", "Fiesta", "Carnival", "Rampage", "Invasion"
+];
+
+const suffixes = [
+  // Real-inspired event type suffixes
+  "Open", "Swing", "Classic", "Championships", "Fest", "Festival",
+  "Swing Open", "Open Swing",
+  "Fling", "Challenge", "Stampede", "Convention", "Bash",
+  "Revolution", "Experience", "Spectacular", "Invitational", "Showdown",
+  "Extravaganza", "Explosion", "Madness", "Magic", "Nights",
+  "Jam", "Connection", "Vibes", "Camp", "Vacation",
+  // Funny
+  "Apocalypse", "Catastrophe", "Disaster", "Situation", "Incident",
+  "Emergency", "Intervention", "Conspiracy", "Abduction", "Experiment",
+  "Thunderdome", "Royale", "Gauntlet", "Smackdown", "Bonanza",
+  "Palooza", "Stravaganza", "Tastrophe", "O-Rama", "Mania",
+  "Odyssey", "Safari", "Quest", "Crusade", "Rampage"
+];
+
+const taglines = [
+  "A WSDC-ish Registry Event... probably",
+  "Now with 30% more anchor steps!",
+  "Where sugar pushes meet sugar highs",
+  "Your chiropractor will thank you",
+  "Side effects may include excessive styling",
+  "Not responsible for lost shoes",
+  "Judges not included",
+  "Stretchy pants recommended",
+  "May cause spontaneous body rolls",
+  "Social dancing until the sun comes up... or security arrives",
+  "Warning: May contain actual dancing",
+  "Deodorant strongly encouraged",
+  "Free ice for your knees!",
+  "Results may vary. Points definitely won't.",
+  "Where 'one more dance' is always a lie",
+  "Triple stepping since [current year]",
+  "Your feet will hate you. Your soul will thank you.",
+  "Now accepting prayers for good prelim songs",
+  "Zero accountability, maximum fun",
+  "Jack & Jill & Regret & Recovery",
+  "The after party IS the event",
+  "BYOB: Bring Your Own Blister Pads",
+  "100% organic, free-range West Coast Swing",
+  "Certified by absolutely nobody",
+  "Where everyone thinks they're Champions division"
+];
+
+const marqueeTexts = [
+  "★ NOW GENERATING EVENT NAMES ★",
+  "🎰 FEELING LUCKY, DANCER? 🎰",
+  "★ SPIN IT TO WIN IT ★",
+  "💃 100% WSDC UNOFFICIAL 🕺",
+  "★ PATENT PENDING ON ALL NAMES ★",
+  "🔥 HOT NEW EVENTS DROPPING 🔥",
+  "★ TRIPLE STEP YOUR WAY TO GLORY ★",
+  "🎵 WHERE MUSICALITY MEETS INSANITY 🎵",
+];
+
+// ======================== INIT ========================
+
+let spinning = false;
+let spins = 0;
+const history = new Set();
+let animFrames = [];
+
+// Fill marquee
+const mq = document.getElementById('marquee');
+const mqContent = marqueeTexts.map(t => `<span>${t}</span>`).join('');
+mq.innerHTML = mqContent + mqContent;
+
+// Populate reels
+function populateReel(stripId, items) {
+  const strip = document.getElementById(stripId);
+  // Quadruple the items for seamless spin illusion
+  const allItems = [...items, ...items, ...items, ...items];
+  strip.innerHTML = allItems.map(t => `<div class="item">${t}</div>`).join('');
+}
+
+populateReel('strip1', prefixes);
+populateReel('strip2', middles);
+populateReel('strip3', suffixes);
+
+// Update combo count
+const totalCombos = prefixes.length * middles.length * suffixes.length;
+document.getElementById('comboCount').textContent = totalCombos.toLocaleString();
+
+// ======================== SPIN ========================
+
+function spin() {
+  if (spinning) return;
+  spinning = true;
+
+  const btn = document.getElementById('pullBtn');
+  btn.classList.add('spinning');
+  btn.innerHTML = '&#9203; SPINNING...';
+
+  // Hide previous result
+  document.getElementById('resultName').classList.remove('visible');
+  document.getElementById('resultTagline').classList.remove('visible');
+
+  // Pick results — guarantee at least one word contains "swing" or "open"
+  let r1 = Math.floor(Math.random() * prefixes.length);
+  let r2 = Math.floor(Math.random() * middles.length);
+  let r3 = Math.floor(Math.random() * suffixes.length);
+
+  const hasKeyword = (word) => /swing|open/i.test(word);
+  if (!hasKeyword(prefixes[r1]) && !hasKeyword(middles[r2]) && !hasKeyword(suffixes[r3])) {
+    // No keyword found — force one reel to land on a keyword entry
+    const swingMiddles = middles.map((w, i) => i).filter(i => hasKeyword(middles[i]));
+    const openSuffixes = suffixes.map((w, i) => i).filter(i => hasKeyword(suffixes[i]));
+    const swingPrefixes = prefixes.map((w, i) => i).filter(i => hasKeyword(prefixes[i]));
+    const options = [];
+    if (swingPrefixes.length) options.push(() => { r1 = swingPrefixes[Math.floor(Math.random() * swingPrefixes.length)]; });
+    if (swingMiddles.length)  options.push(() => { r2 = swingMiddles[Math.floor(Math.random() * swingMiddles.length)]; });
+    if (openSuffixes.length)  options.push(() => { r3 = openSuffixes[Math.floor(Math.random() * openSuffixes.length)]; });
+    options[Math.floor(Math.random() * options.length)]();
+  }
+
+  const reelHeight = window.innerWidth <= 550 ? 80 : 100;
+
+  // Animate each reel
+  animateReel('strip1', prefixes, r1, reelHeight, 1800, () => {});
+  animateReel('strip2', middles, r2, reelHeight, 2300, () => {});
+  animateReel('strip3', suffixes, r3, reelHeight, 2800, () => {
+    // All done
+    const name = `${prefixes[r1]} ${middles[r2]} ${suffixes[r3]}`;
+    const tagline = taglines[Math.floor(Math.random() * taglines.length)];
+
+    const resultEl = document.getElementById('resultName');
+    const taglineEl = document.getElementById('resultTagline');
+    resultEl.textContent = name;
+    taglineEl.textContent = `"${tagline}"`;
+
+    requestAnimationFrame(() => {
+      resultEl.classList.add('visible');
+      taglineEl.classList.add('visible');
+    });
+
+    // Stats
+    spins++;
+    history.add(name);
+    document.getElementById('spinCount').textContent = spins;
+    document.getElementById('uniqueCount').textContent = history.size;
+
+    // History
+    addToHistory(name);
+
+    // Effects
+    spawnConfetti();
+    flashScreen();
+
+    // Reset button
+    btn.classList.remove('spinning');
+    btn.innerHTML = '&#127920; SPIN AGAIN!';
+    spinning = false;
+  });
+}
+
+function animateReel(stripId, items, targetIndex, itemH, duration, onDone) {
+  const strip = document.getElementById(stripId);
+  const totalItems = items.length;
+  const startTime = performance.now();
+
+  // Target: spin through all items 2 full cycles + land on target
+  const fullCycles = 2 * totalItems;
+  const targetPos = fullCycles + targetIndex;
+
+  function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
+
+  function frame(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = easeOutCubic(progress);
+
+    const currentPos = eased * targetPos;
+    const offset = -(currentPos * itemH);
+    strip.style.transform = `translateY(${offset}px)`;
+
+    if (progress < 1) {
+      requestAnimationFrame(frame);
+    } else {
+      onDone();
+    }
+  }
+
+  requestAnimationFrame(frame);
+}
+
+// ======================== HISTORY ========================
+
+function addToHistory(name) {
+  const section = document.getElementById('historySection');
+  const list = document.getElementById('historyList');
+  section.style.display = 'block';
+
+  const chip = document.createElement('div');
+  chip.className = 'history-chip';
+  chip.textContent = name;
+  list.prepend(chip);
+
+  // Keep max 50
+  while (list.children.length > 50) {
+    list.removeChild(list.lastChild);
+  }
+}
+
+function clearHistory() {
+  document.getElementById('historyList').innerHTML = '';
+  document.getElementById('historySection').style.display = 'none';
+  history.clear();
+  document.getElementById('uniqueCount').textContent = '0';
+}
+
+// ======================== EFFECTS ========================
+
+function spawnConfetti() {
+  const colors = [
+    getComputedStyle(document.documentElement).getPropertyValue('--neon-pink').trim(),
+    getComputedStyle(document.documentElement).getPropertyValue('--neon-cyan').trim(),
+    getComputedStyle(document.documentElement).getPropertyValue('--neon-yellow').trim(),
+    getComputedStyle(document.documentElement).getPropertyValue('--neon-green').trim(),
+    getComputedStyle(document.documentElement).getPropertyValue('--neon-purple').trim(),
+    getComputedStyle(document.documentElement).getPropertyValue('--gold').trim(),
+  ];
+
+  for (let i = 0; i < 30; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.left = Math.random() * 100 + 'vw';
+    piece.style.top = '-10px';
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+    piece.style.width = (4 + Math.random() * 8) + 'px';
+    piece.style.height = (4 + Math.random() * 8) + 'px';
+    piece.style.animationDelay = (Math.random() * 0.5) + 's';
+    piece.style.animationDuration = (1 + Math.random() * 1.5) + 's';
+    document.body.appendChild(piece);
+    setTimeout(() => piece.remove(), 3000);
+  }
+}
+
+function flashScreen() {
+  const flash = document.createElement('div');
+  flash.className = 'jackpot-flash';
+  document.body.appendChild(flash);
+  setTimeout(() => flash.remove(), 700);
+}
+
+// ======================== KEYBOARD ========================
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.code === 'Enter') {
+    e.preventDefault();
+    spin();
+  }
+});
+</script>
+
+</body>
+</html>
