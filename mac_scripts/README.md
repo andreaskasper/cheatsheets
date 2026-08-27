@@ -1,6 +1,6 @@
 # Mac-Hilfsskripte
 
-Drei Kommandozeilenprogramme für die Arbeit mit Videobeständen auf dem Mac,
+Vier Kommandozeilenprogramme für die Arbeit mit Videobeständen auf dem Mac,
 dazu ein Updater, der sie aktuell hält.
 
 | Befehl | Wofür |
@@ -8,9 +8,10 @@ dazu ein Updater, der sie aktuell hält.
 | `md5er` | Erzeugt für jede Datei eine `.md5`-Prüfsumme |
 | `md5check` | Prüft die Dateien gegen ihre `.md5`-Dateien |
 | `lfs_files2csv` | Liest die Metadaten aller Videodateien in eine Tabelle |
-| `update-andiscripts.sh` | Holt alle drei frisch von GitHub |
+| `lfs_umzug` | Kopiert einen Bestand von einem NAS auf ein anderes |
+| `update-andiscripts.sh` | Holt alle vier frisch von GitHub |
 
-Alle drei kennen `--help`, `--version` und `update`.
+Alle vier kennen `--help`, `--version` und `update`.
 
 ## Installation
 
@@ -21,15 +22,15 @@ curl -sSfL https://raw.githubusercontent.com/andreaskasper/cheatsheets/refs/head
 bash /tmp/update-andiscripts.sh
 ```
 
-Der Updater legt alle vier Dateien nach `/usr/local/bin` und macht sie
+Der Updater legt alle fünf Dateien nach `/usr/local/bin` und macht sie
 ausführbar. Fehlen die Schreibrechte, fragt er nach und startet sich mit `sudo`
 neu; dann wird das Anmeldepasswort abgefragt.
 
-`lfs_files2csv` braucht zusätzlich PHP und ffmpeg. Der Updater sagt am Ende, ob
-etwas fehlt:
+`lfs_files2csv` braucht zusätzlich PHP und ffmpeg, `lfs_umzug` braucht rclone.
+Der Updater sagt am Ende, ob etwas fehlt:
 
 ```bash
-brew install php ffmpeg
+brew install php ffmpeg rclone
 ```
 
 `md5er` und `md5check` laufen ohne weitere Installation, sie nutzen das
@@ -47,6 +48,7 @@ Geht auch aus jedem der Programme heraus, das ist derselbe Vorgang:
 md5er update
 md5check update
 lfs_files2csv update
+lfs_umzug update
 ```
 
 ---
@@ -235,29 +237,117 @@ Trennzeichen geschrieben, damit Excel und Numbers sie ohne Nacharbeit richtig
 öffnen. Wird sie trotzdem falsch dargestellt, hilft in Excel der Weg über
 Daten, Aus Text/CSV, dort UTF-8 und Semikolon wählen.
 
+## lfs_umzug
+
+Kopiert einen Bestand von einem Ordner in einen anderen, typischerweise von
+einem NAS auf ein anderes.
+
+```bash
+lfs_umzug /Volumes/NAS_alt/Sendungen /Volumes/NAS_neu/Sendungen
+```
+
+Es wird ausschließlich kopiert. Im Ziel wird nichts gelöscht, in der Quelle
+erst recht nicht. Gleichnamige Dateien im Ziel werden überschrieben, die alte
+Fassung wandert vorher in `.lfs_papierkorb_<zeitstempel>` neben dem Ziel.
+
+### Was vor dem Start passiert
+
+```
+════════════════════════════════════════════════════════════
+  Umzug
+════════════════════════════════════════════════════════════
+  Von:   /Volumes/NAS_alt/Sendungen
+  Nach:  /Volumes/NAS_neu/Sendungen
+
+  Dateien in der Quelle: 4.812
+  Gesamtgroesse:         6,4 TB
+  Frei am Ziel:          11,2 TB
+
+  [WARNUNG]   Der Zielordner ist NICHT leer. Es liegt bereits etwas darin.
+  Gleichnamige Dateien werden ueberschrieben, alles andere bleibt.
+  Papierkorb:  /Volumes/NAS_neu/.lfs_papierkorb_20240314T101500
+  Protokoll:   /Volumes/NAS_neu/umzug_20240314T101500.log
+════════════════════════════════════════════════════════════
+
+Weiter? (j/N)
+```
+
+Der Bildschirm ist die eigentliche Sicherung: wer Quelle und Ziel vertauscht
+hat, sieht es an der Richtung, bevor irgendetwas passiert. `+ja` überspringt die
+Rückfrage.
+
+Vorher wird außerdem geprüft, ob rclone installiert ist, ob die Quelle existiert
+und nicht leer ist, ob das Ziel erreichbar ist, ob eines der beiden im anderen
+liegt und ob der Platz reicht. Gibt es weder den Zielordner noch den Ordner
+darüber, bricht das Programm mit dem Hinweis ab, dass das NAS vermutlich nicht
+eingebunden ist. Ein nicht eingebundenes Volume sieht sonst aus wie ein leerer
+Ordner, und dann landet das Archiv auf der internen Festplatte.
+
+### Prüfen, dass die Kopie stimmt
+
+```bash
+lfs_umzug /Volumes/NAS_alt/Sendungen /Volumes/NAS_neu/Sendungen +md5
+```
+
+`+md5` ist der Weg für einen Archivumzug. Fehlen in der Quelle Prüfsummen, legt
+`md5er` sie zuerst an. Die `.md5`-Dateien reisen mit, danach prüft `md5check`
+das Ziel. Verglichen wird also gegen Werte, die vor dem Transport entstanden
+sind, und der Bestand bleibt am Ziel dauerhaft nachweisbar.
+
+`+verify` ist die Alternative ohne Prüfsummen: rclone vergleicht Quelle und Ziel
+direkt. Braucht keine Vorbereitung, liest dafür beide Seiten und sagt nur, ob
+die Kopie zur Quelle passt.
+
+Beides findet Fehler, die rclone beim Kopieren selbst übersieht. rclone
+vergleicht Dateien nach Größe und Änderungszeit; eine Datei, die am Ziel bei
+gleicher Größe und Zeit inhaltlich kippt, fällt erst bei der Prüfung auf.
+
+### Weitere Optionen
+
+```bash
+lfs_umzug QUELLE ZIEL +dry            # Trockenlauf, schreibt nichts
+lfs_umzug QUELLE ZIEL +ja             # ohne Rückfrage
+lfs_umzug QUELLE ZIEL +alles          # auch .DS_Store, ._* und Thumbs.db
+lfs_umzug QUELLE ZIEL +chucknorris    # ohne Papierkorb
+lfs_umzug QUELLE ZIEL +quiet          # ohne Fortschrittsbalken
+lfs_umzug QUELLE ZIEL -report         # ohne Protokoll
+lfs_umzug QUELLE ZIEL +limit=50M      # auf 50 MB/s bremsen
+lfs_umzug QUELLE ZIEL +parallel=2     # zwei Dateien gleichzeitig
+```
+
+`+limit=` geht unverändert an rclone weiter, also funktioniert auch ein
+Zeitplan: `+limit="08:00,20M 18:00,off"` bremst tagsüber und gibt abends frei.
+
+### Wenn der Lauf abbricht
+
+Denselben Befehl noch einmal aufrufen. rclone macht dort weiter, wo es
+aufgehört hat, bereits vollständig übertragene Dateien werden übersprungen. Es
+gibt keine Wiederaufnahme-Option, weil sie nicht nötig ist.
+
 ---
 
 # Technischer Teil
 
 ## Aufbau
 
-Vier eigenständige Dateien ohne gemeinsame Bibliothek, jede für sich lauffähig.
-`md5er`, `md5check` und `update-andiscripts.sh` sind Bash, `lfs_files2csv` ist
-PHP mit `#!/usr/bin/env php`.
+Fünf eigenständige Dateien ohne gemeinsame Bibliothek, jede für sich lauffähig.
+`md5er`, `md5check`, `lfs_umzug` und `update-andiscripts.sh` sind Bash,
+`lfs_files2csv` ist PHP mit `#!/usr/bin/env php`.
 
 Der Updater kennt die Skriptliste als Array. Ein neues Skript ist eine Zeile in
 `SCRIPTS=()`, mehr ist nicht nötig.
 
 ## Rückgabewerte
 
-Alle drei Programme geben 0 zurück, wenn alles glatt lief, und 1, wenn es etwas
-zu bemängeln gab.
+Alle Programme geben 0 zurück, wenn alles glatt lief, und 1, wenn es etwas zu
+bemängeln gab.
 
 `md5er` gibt 1 zurück, wenn mindestens eine Prüfsumme nicht geschrieben werden
 konnte. `md5check` gibt 1 zurück, wenn mindestens eine Prüfsumme abweicht oder
 fehlt. `lfs_files2csv` gibt 1 zurück, wenn mindestens eine Datei nicht gelesen
-werden konnte oder der Aufruf fehlerhaft war. `update-andiscripts.sh` gibt 1
-zurück, wenn mindestens ein Download fehlschlug.
+werden konnte oder der Aufruf fehlerhaft war. `lfs_umzug` gibt 1 zurück bei
+Abbruch, Übertragungsfehler oder nicht bestandener Prüfung.
+`update-andiscripts.sh` gibt 1 zurück, wenn mindestens ein Download fehlschlug.
 
 ## Fortschritt und Wiederaufnahme
 
@@ -341,13 +431,22 @@ Maskierung nicht vorkommen dürfen.
 
 ## Was ausgelassen wird
 
-Versteckte Dateien und Ordner in allen drei Programmen. Dazu zählen die
-AppleDouble-Reste `._name.mov`, die auf exFAT- und Netzlaufwerken neben dem
-Original liegen, denselben Namen und dieselbe Endung tragen und kein Bild
-enthalten.
+`md5er`, `md5check` und `lfs_files2csv` lassen alle versteckten Dateien und
+Ordner aus. Dazu zählen die AppleDouble-Reste `._name.mov`, die auf exFAT- und
+Netzlaufwerken neben dem Original liegen, denselben Namen und dieselbe Endung
+tragen und kein Bild enthalten.
 
-Verknüpfte Ordner werden nicht verfolgt, sonst läuft der Durchlauf bei einer
-Schleife endlos.
+`lfs_umzug` ist bewusst großzügiger: es lässt nur die bekannten System- und
+Mülldateien aus (`.DS_Store`, `._*`, `.Trashes`, `.Spotlight-V100`,
+`.fseventsd`, `.TemporaryItems`, `.DocumentRevisions-V100`, `.apdisk`,
+`Thumbs.db`, `desktop.ini`). Ein selbst angelegter versteckter Ordner zieht mit
+um. Bei einem Umzug wäre stilles Weglassen der schlimmere Fehler. Die Folge:
+`md5er` legt für versteckte Ordner keine Prüfsummen an, deren Inhalt kommt bei
+`+md5` also ungeprüft am Ziel an.
+
+Verknüpfte Ordner werden von `lfs_files2csv` nicht verfolgt, sonst läuft der
+Durchlauf bei einer Schleife endlos. `lfs_umzug` überlässt das rclone, das
+Verknüpfungen überspringt und im Protokoll vermerkt.
 
 ## Erkannte Endungen
 
@@ -369,6 +468,39 @@ Analyse. `GOP_Size` ist aus derselben Überlegung leer.
 `Video_Bitrate` ist eine Schätzung, wenn der Videostream selbst keine Bitrate
 meldet: dann werden 80 Prozent der Gesamtbitrate angesetzt.
 
+## Umzug
+
+`lfs_umzug` ruft `rclone copy` auf, nie `rclone sync`. Der Unterschied ist der
+Grund für die ganze Bauart: `sync` gleicht das Ziel an die Quelle an und löscht
+dabei im Ziel alles, was in der Quelle fehlt, ohne Rückfrage und ohne
+Papierkorb. Bei vertauschten Argumenten ist damit der Zielbestand weg, und
+rclone kennt kein Rückgängig. `copy` fügt nur hinzu und überschreibt.
+
+Überschriebene Dateien fängt `--backup-dir` ab. rclone verbietet einen
+Backup-Ordner innerhalb des Ziels, deshalb liegt er daneben, im übergeordneten
+Ordner. Ist das Ziel ein Volume-Wurzelordner, liegt "daneben" auf einer anderen
+Platte; aus dem Verschieben wird dann ein echtes Kopieren. Das Skript vergleicht
+die Geräte aus `df` und warnt in dem Fall. Ein leer gebliebener Papierkorb wird
+am Ende entfernt.
+
+Die Übersicht vor dem Start kostet einen `rclone size`-Durchlauf über die
+Quelle, mit denselben Ausschlüssen wie der Umzug selbst. Ohne das nennt die
+Übersicht eine Dateizahl, die später niemand wiederfindet.
+
+Im Trockenlauf wird wirklich nichts geschrieben: kein Zielordner, kein
+Protokoll. `--log-file` würde die Datei sonst auch bei `--dry-run` anlegen.
+
+Bei einem Pfad in der Form `remote:ordner` entfallen alle Prüfungen auf
+Erreichbarkeit, Platz und Verschachtelung, und das Skript sagt das. Solange
+beide Pfade lokal sind, wird `RCLONE_CONFIG=/dev/null` gesetzt: ohne
+Konfigurationsdatei meldet rclone sonst ein NOTICE, das wie ein Fehler aussieht.
+
+Zwei Bash-Details, die auf dem Mac zählen: die Argumente werden mit `while` und
+`shift` gelesen statt mit `for arg in "$@"`, weil das Bash 3.2 von macOS unter
+`set -u` über ein leeres `"$@"` stolpert. Und die Prüfung, ob ein Pfad im
+anderen liegt, läuft über `${DEST#"$SRC"/}` statt über ein `case`-Muster, sonst
+würden eckige Klammern in einem Ordnernamen als Suchmuster gelesen.
+
 ## Aktualisieren des Updaters
 
 Der Updater steht in seiner eigenen Liste an letzter Stelle und ersetzt sich
@@ -383,10 +515,18 @@ kein funktionierendes Skript.
 ## Getestet mit
 
 PHP 8.1 und 8.5, jeweils mit `error_reporting=E_ALL` ohne Meldungen. ffprobe 4.4.
-Bash 5. Geprüft wurden CSV-, JSON- und XML-Ausgabe gegen die jeweiligen Parser,
-Dateinamen mit Leerzeichen und Anführungszeichen, Abbruch und Wiederaufnahme,
-Wiederaufnahme mit abweichenden Einstellungen, der Bericht mit allen fünf
-Kategorien sowie ein Trockenlauf über 55 000 Dateien.
+rclone 1.75. Bash 5. Geprüft wurden CSV-, JSON- und XML-Ausgabe gegen die
+jeweiligen Parser, Dateinamen mit Leerzeichen und Anführungszeichen, Abbruch und
+Wiederaufnahme, Wiederaufnahme mit abweichenden Einstellungen, der Bericht mit
+allen fünf Kategorien sowie ein Trockenlauf über 55 000 Dateien.
+
+Für `lfs_umzug`: Papierkorb bei überschriebenen Dateien, vertauschte Argumente,
+Ziel innerhalb der Quelle und umgekehrt, fehlende Quelle, nicht eingebundenes
+Ziel, Trockenlauf ohne jeden Schreibzugriff, `+md5` und `+verify` im guten Fall
+und gegen eine am Ziel bei gleicher Größe und Änderungszeit verfälschte Datei
+(beide schlagen an, Rückgabewert 1), Systemdateien mit und ohne `+alles`,
+Papierkorb auf einem anderen Volume und die Warnung bei rclone-Remotes.
 
 Nicht automatisch geprüft werden konnte, was nur auf macOS auftritt: das
-BSD-`md5`, das Verhalten von `sudo` und die Rechtesituation auf `/usr/local/bin`.
+BSD-`md5`, das Verhalten von `sudo`, die Rechtesituation auf `/usr/local/bin`
+und SMB-Freigaben als Quelle oder Ziel.
