@@ -7,7 +7,7 @@
 
 set -u
 
-VERSION="v1.2.260827"
+VERSION="v1.3.260827"
 
 TARGET_DIR="/usr/local/bin"
 BASE_URL="https://raw.githubusercontent.com/andreaskasper/cheatsheets/refs/heads/master/mac_scripts"
@@ -19,6 +19,7 @@ SCRIPTS=(
   "md5er"
   "md5check"
   "lfs_files2csv"
+  "lfs_umzug"
   "update-andiscripts.sh"
 )
 
@@ -39,6 +40,7 @@ Installiert werden:
   md5er                  Pruefsummen erzeugen
   md5check               Pruefsummen kontrollieren
   lfs_files2csv          Video-Metadaten in eine Tabelle schreiben
+  lfs_umzug              Bestaende von einem NAS auf ein anderes kopieren
   update-andiscripts.sh  dieses Skript
 
 Braucht Schreibrechte auf /usr/local/bin. Fehlen sie, fragt das Skript nach und
@@ -153,19 +155,23 @@ done
 echo
 echo "Installiert: $installed, fehlgeschlagen: $failed"
 
-# Voraussetzungen pruefen. lfs_files2csv laeuft ohne diese beiden nicht.
+# Voraussetzungen pruefen. Die Skripte selbst laufen, ihre Werkzeuge fehlen aber.
 missing=""
-command -v php >/dev/null 2>&1 || missing="$missing php"
+command -v php >/dev/null 2>&1    || missing="$missing php"
 command -v ffprobe >/dev/null 2>&1 || missing="$missing ffprobe"
+command -v rclone >/dev/null 2>&1  || missing="$missing rclone"
 
 if [ -n "$missing" ]; then
   echo
-  echo "⚠️ Hinweis: lfs_files2csv braucht noch:$missing"
+  echo "⚠️ Es fehlen noch:$missing"
   case "$missing" in
-    *ffprobe*) echo "  ffprobe ist Teil von ffmpeg:  brew install ffmpeg" ;;
+    *php*) echo "  php     fuer lfs_files2csv:  brew install php" ;;
   esac
   case "$missing" in
-    *php*) echo "  php installieren:  brew install php" ;;
+    *ffprobe*) echo "  ffprobe fuer lfs_files2csv:  brew install ffmpeg" ;;
+  esac
+  case "$missing" in
+    *rclone*) echo "  rclone  fuer lfs_umzug:      brew install rclone" ;;
   esac
 fi
 
