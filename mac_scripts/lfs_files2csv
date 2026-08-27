@@ -25,7 +25,7 @@
 ini_set('memory_limit', '-1');
 
 // ================ KONFIGURATION ================
-const VERSION = '3.2.0';
+const VERSION = '3.3.0';
 
 const SUPPORTED_EXTENSIONS = [
     // bis 3.0.2 bekannt
@@ -45,6 +45,18 @@ const UPDATER_NAME = 'update-andiscripts.sh';
 
 // Markierung der aktuellen Stelle im Fortschrittsbalken.
 const PROGRESS_MARKER = "\u{1F4BB}";
+
+// Laufender Kringel für den Zähldurchlauf. Er beweist, dass sich etwas tut,
+// auch wenn die Zahlen gerade stehen, weil ein einzelner Ordner lange braucht.
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+// Höchstens zehn Aktualisierungen je Sekunde. Ein printf je Datei wäre bei
+// 300.000 Dateien teurer als das Zählen selbst.
+const SPINNER_INTERVALL = 0.1;
+
+// Läuft die Ausgabe nicht auf ein Terminal, gibt es statt der Kringelzeile
+// alle so viele Dateien eine ganze Zeile.
+const SCAN_ZEILE_ALLE = 25000;
 
 // ================ GLOBALE VARIABLEN ================
 $config = [
@@ -78,6 +90,7 @@ $stats = [
     'hidden_dirs'       => 0, // versteckte Ordner
     'excluded_dirs'     => 0, // per +exclude ausgelassen
     'symlink_dirs'      => 0, // verknüpfte Ordner
+    'own_output'        => 0, // Tabelle oder Bericht eines früheren Laufs
 ];
 
 $processed_files  = [];   // Pfad => true, nur bei +resume gefüllt
@@ -90,6 +103,14 @@ $resumed          = false; // true nur, wenn ein alter Lauf wirklich fortgesetzt
 $processing_start = 0.0;   // Beginn der Verarbeitung, Grundlage der ETA
 $report_file      = '';
 $report_handle    = null;
+
+// Anzeige während des Zähldurchlaufs
+$scan_files       = 0;
+$scan_videos      = 0;
+$scan_dir         = '';    // Ordner, in dem der Durchlauf gerade steckt
+$scan_next_draw   = 0.0;
+$scan_next_line   = SCAN_ZEILE_ALLE;
+$scan_frame       = 0;
 
 // ================ ABLAUF ================
 main();
@@ -130,8 +151,7 @@ function main() {
     output("", 1);
 
     // Erster Durchlauf: nur zählen. Speichert keine Pfade, wird aber für die
-    // Prozentanzeige gebraucht.
-    output("Zähle Dateien ...", 1);
+    // Prozentanzeige gebraucht. Die Anzeige dazu macht countFiles selbst.
     list($total_files, $video_files) = countFiles($config['directory']);
     $stats['total_files_found'] = $total_files;
     $stats['video_files_found'] = $video_files;
@@ -269,8 +289,9 @@ function parseArguments() {
 function showUsage() {
     echo "Verwendung: " . basename($GLOBALS['argv'][0]) . " <ordner> [optionen]\n\n";
     echo "Liest alle Videodateien unterhalb von <ordner> und schreibt ihre\n";
-    echo "Metadaten in eine Tabelle. Die Ausgabedatei landet im übergeordneten\n";
-    echo "Ordner von <ordner>.\n\n";
+    echo "Metadaten in eine Tabelle. Die Ausgabedatei landet in <ordner> selbst,\n";
+    echo "also beim Material. Ausgaben früherer Läufe werden dabei erkannt und\n";
+    echo "nicht noch einmal mitgezählt.\n\n";
     echo "Optionen:\n";
     echo "  +md5              MD5- und SHA1-Prüfsumme berechnen (deutlich langsamer)\n";
     echo "  +json             Ausgabe als JSON statt CSV\n";
@@ -402,8 +423,17 @@ function isExecutableAvailable($path) {
 function setupFiles() {
     global $config, $output_file, $progress_file, $processed_files, $entries_written, $resumed;
 
-    $parent = dirname($config['directory_real']);
-    $progress_file = $parent . '/' . PROGRESS_FILE_PREFIX
+    // Ergebnis, Bericht und Fortschritt liegen im durchsuchten Ordner selbst,
+    // damit sie beim Material bleiben und nicht daneben.
+    $ziel = $config['directory_real'];
+
+    if (!$config['dry_run'] && !is_writable($ziel)) {
+        error("In den Ordner lässt sich nicht schreiben: $ziel", false);
+        error("Die Tabelle wird dort abgelegt. Ist das Volume schreibgeschützt,"
+            . " hilft ein Trockenlauf mit +dry.", true);
+    }
+
+    $progress_file = $ziel . '/' . PROGRESS_FILE_PREFIX
         . substr(md5($config['directory_real']), 0, 12) . PROGRESS_FILE_SUFFIX;
 
     if ($config['resume'] && is_file($progress_file)) {
@@ -427,16 +457,24 @@ function setupFiles() {
         output("Keine Fortschrittsdatei gefunden, der Lauf beginnt von vorn.", 1);
     }
 
-    $timestamp   = date('Ymd') . 'T' . date('His');
-    $output_file = $parent . '/archiv_' . $timestamp . '.' . $config['output_format'];
+    // Der Zeitstempel ist auf die Sekunde genau. Zwei Läufe in derselben
+    // Sekunde bekommen deshalb den nächsten freien Namen. Das ist besser als zu
+    // fragen: eine Rückfrage lässt sich ohne Terminal nicht beantworten, und
+    // eine bestehende Tabelle zu überschreiben will man nie.
+    $timestamp = date('Ymd') . 'T' . date('His');
+    $basis     = $ziel . '/archiv_' . $timestamp;
+    $endung    = '.' . $config['output_format'];
+    $nummer    = 1;
 
-    if (file_exists($output_file) && !$config['dry_run']) {
-        $answer = promptYesNo("Ausgabedatei existiert bereits. Überschreiben?");
-        if (!$answer) {
-            output("Abgebrochen.", 1);
-            exit(0);
+    while (file_exists($basis . $endung) || file_exists($basis . '.bericht.txt')) {
+        $nummer++;
+        if ($nummer > 999) {
+            error("Es lässt sich kein freier Dateiname finden in: $ziel", true);
         }
+        $basis = $ziel . '/archiv_' . $timestamp . '-' . $nummer;
     }
+
+    $output_file = $basis . $endung;
 }
 
 function progressMatchesConfig($header) {
@@ -601,6 +639,24 @@ function reportLine($category, $path, $reason = '') {
         $reason !== '' ? '   [' . $reason . ']' : ''));
 }
 
+/**
+ * Eine Zeile der Schlussbilanz. Die Spalte wird über mb_strlen gesetzt, nicht
+ * über handgezählte Leerzeichen: sonst verrutscht sie bei jedem Umlaut im
+ * Beschriftungstext.
+ */
+function berichtZeile($beschriftung, $wert, $einzug = 2) {
+    global $report_handle;
+
+    if ($report_handle === null) {
+        return;
+    }
+
+    $links  = str_repeat(' ', $einzug) . $beschriftung . ':';
+    $luecke = max(1, 28 - mb_strlen($links));
+
+    fwrite($report_handle, $links . str_repeat(' ', $luecke) . $wert . "\n");
+}
+
 function finalizeReport() {
     global $report_handle, $stats, $config;
 
@@ -610,37 +666,47 @@ function finalizeReport() {
 
     $nicht_erfasst = $stats['non_video'] + $stats['hidden_files'];
 
+    $dauer = max(0, time() - $stats['start_time']);
+
     fwrite($report_handle, "\n" . str_repeat('-', 78) . "\n");
     fwrite($report_handle, "Zusammenfassung dieses Laufs\n\n");
-    fwrite($report_handle, sprintf("  Dateien insgesamt:        %d\n", $stats['total_files_found']));
-    fwrite($report_handle, sprintf("  Videodateien:             %d\n", $stats['video_files_found']));
-    fwrite($report_handle, sprintf("  Verarbeitet:              %d\n", $stats['files_processed']));
-    fwrite($report_handle, sprintf("  Übersprungen:            %d\n", $stats['files_skipped']));
-    fwrite($report_handle, sprintf("  Fehler:                   %d\n", $stats['errors']));
-    fwrite($report_handle, sprintf("  Nicht erfasst:            %d\n", $nicht_erfasst));
-    fwrite($report_handle, sprintf("    keine Videoendung:      %d\n", $stats['non_video']));
-    fwrite($report_handle, sprintf("    versteckte Dateien:     %d\n", $stats['hidden_files']));
-    fwrite($report_handle, sprintf("  Ausgelassene Ordner:      %d\n",
-        $stats['hidden_dirs'] + $stats['excluded_dirs'] + $stats['symlink_dirs']));
-    fwrite($report_handle, sprintf("    versteckt:              %d\n", $stats['hidden_dirs']));
-    fwrite($report_handle, sprintf("    per +exclude:           %d\n", $stats['excluded_dirs']));
-    fwrite($report_handle, sprintf("    Symlink:                %d\n", $stats['symlink_dirs']));
+
+    berichtZeile('Dateien insgesamt', number_format($stats['total_files_found'], 0, ',', '.'));
+    berichtZeile('Videodateien',      number_format($stats['video_files_found'], 0, ',', '.'));
+    berichtZeile('Verarbeitet',       number_format($stats['files_processed'], 0, ',', '.'));
+    berichtZeile('Übersprungen',      number_format($stats['files_skipped'], 0, ',', '.'));
+    berichtZeile('Fehler',            number_format($stats['errors'], 0, ',', '.'));
+    berichtZeile('Nicht erfasst',     number_format($nicht_erfasst, 0, ',', '.'));
+    berichtZeile('keine Videoendung', $stats['non_video'], 4);
+    berichtZeile('versteckte Dateien', $stats['hidden_files'], 4);
+    berichtZeile('Ausgelassene Ordner',
+        $stats['hidden_dirs'] + $stats['excluded_dirs'] + $stats['symlink_dirs']);
+    berichtZeile('versteckt',    $stats['hidden_dirs'], 4);
+    berichtZeile('per +exclude', $stats['excluded_dirs'], 4);
+    berichtZeile('Symlink',      $stats['symlink_dirs'], 4);
+    if ($stats['own_output'] > 0) {
+        berichtZeile('Ausgaben früherer Läufe', $stats['own_output']);
+    }
+
+    // Damit der Bericht für sich allein steht und nicht neben dem
+    // Bildschirmprotokoll gelesen werden muss.
+    fwrite($report_handle, "\n");
+    berichtZeile('Datenmenge', formatBytes($stats['total_size']));
+    berichtZeile('Laufzeit',   formatDuration($dauer));
+    if ($stats['files_processed'] > 0 && $dauer > 0) {
+        berichtZeile('Tempo',
+            number_format($stats['files_processed'] / $dauer, 2, ',', '.') . ' Dateien/Sekunde');
+        berichtZeile('Durchschnitt je Datei',
+            number_format($dauer / $stats['files_processed'], 2, ',', '.') . ' Sekunden');
+        if ($stats['total_size'] > 0) {
+            berichtZeile('Durchsatz', formatBytes($stats['total_size'] / $dauer) . '/Sekunde');
+        }
+    }
+
     fwrite($report_handle, "\nEnde des Laufs: " . date('Y-m-d H:i:s') . "\n\n");
 
     fclose($report_handle);
     $report_handle = null;
-}
-
-function promptYesNo($question) {
-    if (!function_exists('readline')) {
-        echo $question . " (j/N): ";
-        $line = fgets(STDIN);
-        $answer = ($line === false) ? '' : trim($line);
-    } else {
-        $answer = trim((string)readline($question . " (j/N): "));
-    }
-
-    return in_array(strtolower($answer), ['j', 'ja', 'y', 'yes'], true);
 }
 
 // ================ VERZEICHNIS DURCHLAUFEN ================
@@ -649,12 +715,20 @@ function promptYesNo($question) {
  * besuchten Unterordner, nicht die Dateiliste.
  */
 function iterateFiles($dir) {
-    global $config, $stats, $counting_pass;
+    global $config, $stats, $counting_pass, $scan_dir;
 
     $stack = [$dir];
 
     while (!empty($stack)) {
         $current = array_pop($stack);
+
+        if ($counting_pass) {
+            // Auch beim Betreten eines Ordners aktualisieren. Sonst steht der
+            // Kringel still, solange ein einzelner grosser Ordner gelesen wird
+            // und noch keine Datei zurückgekommen ist.
+            $scan_dir = $current;
+            zeigeZaehlstand();
+        }
 
         if (isExcluded($current)) {
             if (!$counting_pass) {
@@ -755,23 +829,161 @@ function isVideoFile($path) {
     return !isHiddenName($name) && hasVideoExtension($name);
 }
 
+/**
+ * Seit 3.3.0 liegen Tabelle und Bericht im durchsuchten Ordner. Ohne diese
+ * Prüfung würde ein zweiter Lauf die Ergebnisse des ersten mitzählen. Erkannt
+ * wird nur der eigene Namensaufbau, und nur direkt im durchsuchten Ordner.
+ */
+function istEigeneAusgabe($path) {
+    global $config;
+
+    if (dirname($path) !== $config['directory_real']) {
+        return false;
+    }
+
+    return (bool)preg_match(
+        '/^archiv_\d{8}T\d{6}(-\d+)?\.(csv|json|xml|bericht\.txt)$/',
+        basename($path)
+    );
+}
+
 function countFiles($dir) {
-    global $counting_pass;
+    global $counting_pass, $scan_files, $scan_videos, $scan_dir;
 
     $counting_pass = true;
-    $total = 0;
-    $video = 0;
+    $scan_files    = 0;
+    $scan_videos   = 0;
+    $scan_dir      = $dir;
 
     foreach (iterateFiles($dir) as $path) {
-        $total++;
+        if (istEigeneAusgabe($path)) {
+            continue;
+        }
+
+        $scan_files++;
         if (isVideoFile($path)) {
-            $video++;
+            $scan_videos++;
+        }
+
+        zeigeZaehlstand();
+    }
+
+    beendeZaehlstand();
+    $counting_pass = false;
+
+    return [$scan_files, $scan_videos];
+}
+
+// ================ ANZEIGE WAEHREND DES ZAEHLENS ================
+/**
+ * Läuft die Ausgabe auf ein Terminal? Wenn nicht, würde eine Zeile mit \r
+ * beim Umleiten in eine Datei tausende Müllzeilen erzeugen.
+ */
+function istTerminal() {
+    static $ist = null;
+
+    if ($ist === null) {
+        $ist = istTty(STDOUT, true);
+    }
+
+    return $ist;
+}
+
+function istTty($stream, $standard) {
+    if (function_exists('stream_isatty')) {
+        return @stream_isatty($stream);
+    }
+    if (function_exists('posix_isatty')) {
+        return @posix_isatty($stream);
+    }
+
+    return $standard;
+}
+
+function terminalBreite() {
+    static $breite = null;
+
+    if ($breite === null) {
+        $breite = 0;
+
+        $spalten = getenv('COLUMNS');
+        if ($spalten !== false && (int)$spalten > 0) {
+            $breite = (int)$spalten;
+        }
+
+        if ($breite <= 0 && istTerminal()) {
+            $out = [];
+            $rc  = 1;
+            exec('tput cols 2>/dev/null', $out, $rc);
+            if ($rc === 0 && isset($out[0]) && (int)$out[0] > 0) {
+                $breite = (int)$out[0];
+            }
+        }
+
+        if ($breite <= 0) {
+            $breite = 100;
         }
     }
 
-    $counting_pass = false;
+    return $breite;
+}
 
-    return [$total, $video];
+/**
+ * Lange Pfade von vorn kürzen. Die tiefsten Ordner sagen einem, wo man ist,
+ * der Anfang ist bei einem Archivpfad immer derselbe.
+ */
+function kuerzeVorn($pfad, $max) {
+    if ($max < 4 || mb_strlen($pfad) <= $max) {
+        return $pfad;
+    }
+
+    return '…' . mb_substr($pfad, -($max - 1));
+}
+
+function zeigeZaehlstand() {
+    global $config, $scan_files, $scan_videos, $scan_dir,
+           $scan_next_draw, $scan_next_line, $scan_frame;
+
+    if ($config['verbose_level'] === 0) {
+        return;
+    }
+
+    if (!istTerminal()) {
+        // Umgeleitete Ausgabe: ab und zu eine ganze Zeile statt eines Kringels.
+        if ($scan_files >= $scan_next_line) {
+            $scan_next_line = $scan_files + SCAN_ZEILE_ALLE;
+            echo 'Zähle … ' . number_format($scan_files, 0, ',', '.') . " Dateien\n";
+        }
+        return;
+    }
+
+    $jetzt = microtime(true);
+    if ($jetzt < $scan_next_draw) {
+        return;
+    }
+    $scan_next_draw = $jetzt + SPINNER_INTERVALL;
+
+    $kringel = SPINNER_FRAMES[$scan_frame % count(SPINNER_FRAMES)];
+    $scan_frame++;
+
+    $vorn = sprintf('%s Zähle … %s Dateien (%s Video)   ',
+        $kringel,
+        number_format($scan_files, 0, ',', '.'),
+        number_format($scan_videos, 0, ',', '.'));
+
+    $platz = terminalBreite() - mb_strlen($vorn) - 1;
+    // \033[K räumt den Rest der Zeile auf, ohne mit Leerzeichen zu füllen.
+    echo "\r" . $vorn . kuerzeVorn($scan_dir, $platz) . "\033[K";
+}
+
+function beendeZaehlstand() {
+    global $config;
+
+    if ($config['verbose_level'] === 0 || !istTerminal()) {
+        return;
+    }
+
+    echo "\r\033[K";
 }
 
 // ================ VERARBEITUNG ================
@@ -784,6 +996,14 @@ function processVideoFiles($total) {
 
     foreach (iterateFiles($config['directory']) as $file_path) {
         $name = basename($file_path);
+
+        // Tabelle und Bericht eines früheren Laufs liegen seit 3.3.0 im
+        // durchsuchten Ordner. Sie gehören nicht zum Bestand.
+        if (istEigeneAusgabe($file_path)) {
+            $stats['own_output']++;
+            reportLine('AUSGELASSEN', $file_path, 'Ausgabe eines früheren Laufs');
+            continue;
+        }
 
         // Alles, was hier aussortiert wird, taucht in der Tabelle nicht auf.
         // Genau danach fragt man sich hinterher, deshalb Zähler und Bericht.
@@ -831,7 +1051,7 @@ function processVideoFiles($total) {
         $stats['total_size'] += $size;
     }
 
-    if ($config['verbose_level'] > 0) {
+    if ($config['verbose_level'] > 0 && istTerminal()) {
         echo "\n";
     }
 }
@@ -1433,7 +1653,19 @@ function updateProgress($current, $total, $filename) {
         return;
     }
 
-    $percent    = round(($current / $total) * 100, 1);
+    $percent = round(($current / $total) * 100, 1);
+
+    if (!istTerminal()) {
+        // Umgeleitete Ausgabe: keine \r-Zeilen, sonst steht in der Protokolldatei
+        // eine Zeile je Datei. Stattdessen ab und zu ein Zwischenstand.
+        static $naechste_zeile = 0;
+        if ($current >= $naechste_zeile || $current === $total) {
+            $naechste_zeile = $current + 1000;
+            printf("%5.1f%% (%d/%d) %s\n", $percent, $current, $total, $filename);
+        }
+        return;
+    }
+
     $bar_length = 30;
 
     // Der Laptop markiert die aktuelle Stelle. Er belegt eine der 30 Stellen,
