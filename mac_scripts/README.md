@@ -234,7 +234,7 @@ Rückgabewert des Programms ist dann 1.
 
 Umlaute in Excel falsch: die CSV-Datei wird mit Byte-Order-Mark und Semikolon als
 Trennzeichen geschrieben, damit Excel und Numbers sie ohne Nacharbeit richtig
-övnen. Wird sie trotzdem falsch dargestellt, hilft in Excel der Weg über
+öffnen. Wird sie trotzdem falsch dargestellt, hilft in Excel der Weg über
 Daten, Aus Text/CSV, dort UTF-8 und Semikolon wählen.
 
 ## lfs_umzug

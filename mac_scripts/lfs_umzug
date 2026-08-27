@@ -2,10 +2,10 @@
 #
 # Zieht einen Bestand von einem NAS auf ein anderes. Aufsatz auf rclone.
 #
-# Es wird nur kopiert. Weder im Ziel noch in der Quelle wird etwas geloescht.
-# Ueberschriebene Dateien landen in einem Papierkorb neben dem Ziel.
+# Es wird nur kopiert. Weder im Ziel noch in der Quelle wird etwas gelöscht.
+# Überschriebene Dateien landen in einem Papierkorb neben dem Ziel.
 #
-# Ein Skript fuer Manuel vom Haus des Dokumentarfilms
+# Ein Skript für Manuel vom Haus des Dokumentarfilms
 # Autor: Andreas Kasper <andreas.kasper@goo1.de>
 
 set -u
@@ -61,27 +61,27 @@ zeigt:
 
   lfs_umzug /Volumes/NAS_alt/Sendungen /Volumes/NAS_neu/Sendungen
 
-Es wird ausschliesslich kopiert. Im Ziel wird nichts geloescht, in der Quelle
-erst recht nicht. Vorhandene Dateien im Ziel werden ueberschrieben, die alte
+Es wird ausschließlich kopiert. Im Ziel wird nichts gelöscht, in der Quelle
+erst recht nicht. Vorhandene Dateien im Ziel werden überschrieben, die alte
 Fassung wandert vorher in einen Papierkorb neben dem Ziel.
 
-Vor dem Start zeigt das Programm Quelle, Ziel, Dateizahl, Gesamtgroesse und
+Vor dem Start zeigt das Programm Quelle, Ziel, Dateizahl, Gesamtgröße und
 freien Platz und fragt nach. Wer Quelle und Ziel vertauscht hat, sieht es dort.
 
 Ein abgebrochener Lauf braucht keine Sonderbehandlung: einfach denselben Befehl
-noch einmal aufrufen, es geht weiter, wo es aufgehoert hat.
+noch einmal aufrufen, es geht weiter, wo es aufgehört hat.
 
 Optionen:
   +ja               Nicht nachfragen, sofort loslegen
-  +dry              Trockenlauf, zeigt nur was passieren wuerde
-  +md5              Pruefsummen: md5er legt fehlende .md5-Dateien in der QUELLE
-                    an, sie reisen mit, danach prueft md5check das ZIEL.
-                    Geprueft wird damit gegen Werte von VOR dem Transport.
+  +dry              Trockenlauf, zeigt nur was passieren würde
+  +md5              Prüfsummen: md5er legt fehlende .md5-Dateien in der QUELLE
+                    an, sie reisen mit, danach prüft md5check das ZIEL.
+                    Geprüft wird damit gegen Werte von VOR dem Transport.
   +verify           rclone vergleicht Quelle und Ziel nach dem Kopieren.
-                    Braucht keine .md5-Dateien, liest dafuer beide Seiten.
-  +chucknorris      Kein Papierkorb. Ueberschriebene Dateien sind dann weg.
+                    Braucht keine .md5-Dateien, liest dafür beide Seiten.
+  +chucknorris      Kein Papierkorb. Überschriebene Dateien sind dann weg.
   +alles            Auch Systemdateien mitnehmen (.DS_Store, ._*, Thumbs.db …)
-  +quiet            Ohne Fortschrittsbalken, fuer Laeufe im Hintergrund
+  +quiet            Ohne Fortschrittsbalken, für Läufe im Hintergrund
   +limit=WERT       Bandbreite bremsen, z.B. +limit=50M
                     Auch mit Zeitplan: +limit="08:00,20M 18:00,off"
   +parallel=N       Wie viele Dateien gleichzeitig, Voreinstellung 4
@@ -92,29 +92,29 @@ Weitere Befehle:
   --version, -v     Versionsinformationen
   update            Alle Skripte aktualisieren
 
-Ausgelassen werden nur die bekannten System- und Muelldateien, nicht jeder
+Ausgelassen werden nur die bekannten System- und Mülldateien, nicht jeder
 versteckte Ordner. Ein selbst angelegter Ordner wie .eingang zieht also mit um.
-md5er legt fuer versteckte Ordner allerdings keine Pruefsummen an, deren Inhalt
-kommt bei +md5 also ungeprueft am Ziel an.
+md5er legt für versteckte Ordner allerdings keine Prüfsummen an, deren Inhalt
+kommt bei +md5 also ungeprüft am Ziel an.
 
 Was neben dem Ziel angelegt wird:
-  umzug_<zeitstempel>.log             Protokoll, jede uebertragene Datei
-  .lfs_papierkorb_<zeitstempel>/      ueberschriebene alte Fassungen
+  umzug_<zeitstempel>.log             Protokoll, jede übertragene Datei
+  .lfs_papierkorb_<zeitstempel>/      überschriebene alte Fassungen
 Ein leer gebliebener Papierkorb wird am Ende wieder entfernt.
 
-Rueckgabewert:
-  0  alles uebertragen, und falls geprueft wurde, war die Pruefung sauber
-  1  Abbruch, Uebertragungsfehler oder Pruefung nicht bestanden
+Rückgabewert:
+  0  alles übertragen, und falls geprüft wurde, war die Prüfung sauber
+  1  Abbruch, Übertragungsfehler oder Prüfung nicht bestanden
 
-Der empfohlene Ablauf fuer einen Archivumzug:
+Der empfohlene Ablauf für einen Archivumzug:
   lfs_umzug /Volumes/NAS_alt/Sendungen /Volumes/NAS_neu/Sendungen +md5
-Damit hat jede Datei am Ziel eine Pruefsumme, die vor dem Transport entstanden
-ist, und md5check bestaetigt sie. Spaeter laesst sich der Bestand jederzeit mit
+Damit hat jede Datei am Ziel eine Prüfsumme, die vor dem Transport entstanden
+ist, und md5check bestätigt sie. Später lässt sich der Bestand jederzeit mit
   md5check /Volumes/NAS_neu/Sendungen
 erneut nachweisen.
 
 rclone-Remotes (nas2:ordner) funktionieren auch, dann entfallen aber die
-Vorabpruefungen auf Platz und Erreichbarkeit, und das Programm sagt das.
+Vorabprüfungen auf Platz und Erreichbarkeit, und das Programm sagt das.
 EOF
 }
 
@@ -183,7 +183,7 @@ ist_remote() {
 
 # ================ ARGUMENTE ================
 # Mit while und shift statt "for arg in "$@"": das Bash 3.2 auf dem Mac stolpert
-# unter set -u ueber ein leeres "$@".
+# unter set -u über ein leeres "$@".
 if [ "$#" -eq 0 ]; then
   show_help
   exit 1
@@ -252,8 +252,8 @@ DEST_REMOTE=0
 ist_remote "$SRC"  && SRC_REMOTE=1
 ist_remote "$DEST" && DEST_REMOTE=1
 
-# Ohne Remotes braucht rclone keine Konfigurationsdatei. Die Meldung darueber
-# sieht aber nach einem Fehler aus, deshalb in dem Fall unterdruecken.
+# Ohne Remotes braucht rclone keine Konfigurationsdatei. Die Meldung darüber
+# sieht aber nach einem Fehler aus, deshalb in dem Fall unterdrücken.
 if [ "$SRC_REMOTE" -eq 0 ] && [ "$DEST_REMOTE" -eq 0 ]; then
   export RCLONE_CONFIG=/dev/null
 fi
@@ -288,7 +288,7 @@ if [ "$DEST_REMOTE" -eq 0 ]; then
   if [ ! -d "$DEST" ]; then
     DEST_PARENT_ROH="$(dirname "$DEST")"
     if [ ! -d "$DEST_PARENT_ROH" ]; then
-      fehler "Weder das Ziel noch der Ordner darueber gibt es: $DEST"
+      fehler "Weder das Ziel noch der Ordner darüber gibt es: $DEST"
       echo "Das sieht danach aus, dass das Ziel-NAS nicht eingebunden ist." >&2
       echo "Bitte im Finder verbinden und den Befehl erneut aufrufen." >&2
       exit 1
@@ -307,7 +307,7 @@ if [ "$DEST_REMOTE" -eq 0 ]; then
       fi
       case "$antwort" in
         j|J|ja|Ja|y|Y|yes)
-          mkdir -p "$DEST" || { fehler "Zielordner liess sich nicht anlegen."; exit 1; }
+          mkdir -p "$DEST" || { fehler "Zielordner ließ sich nicht anlegen."; exit 1; }
           DEST_ERSTELLT=1
           DEST="$(cd "$DEST" && pwd)"
           ;;
@@ -329,8 +329,8 @@ if [ "$OPT_DRY" -eq 1 ]; then
   OPT_LOG=0
 fi
 
-# Fuer df und die Papierkorb-Pruefung: existiert das Ziel noch nicht, muss der
-# Ordner darueber herhalten.
+# Für df und die Papierkorb-Prüfung: existiert das Ziel noch nicht, muss der
+# Ordner darüber herhalten.
 DF_PFAD="$DEST"
 if [ "$DEST_ERSTELLT" -eq 2 ]; then
   DF_PFAD="$(dirname "$DEST")"
@@ -342,13 +342,13 @@ if [ "$SRC_REMOTE" -eq 0 ] && [ "$DEST_REMOTE" -eq 0 ]; then
     fehler "Quelle und Ziel sind derselbe Ordner."
     exit 1
   fi
-  # Praefixvergleich ueber ${var#"..."} statt case-Muster: sonst wuerden
+  # Präfixvergleich über ${var#"..."} statt case-Muster: sonst würden
   # eckige Klammern oder Sternchen im Ordnernamen als Suchmuster gelesen.
   if [ "${DEST#"$SRC"/}" != "$DEST" ]; then
     fehler "Das Ziel liegt innerhalb der Quelle."
     echo "  Quelle: $SRC" >&2
     echo "  Ziel:   $DEST" >&2
-    echo "Das Programm wuerde sich selbst in die Quelle hineinkopieren." >&2
+    echo "Das Programm würde sich selbst in die Quelle hineinkopieren." >&2
     exit 1
   fi
   if [ "${SRC#"$DEST"/}" != "$SRC" ]; then
@@ -378,7 +378,7 @@ fi
 # rclone verbietet einen Papierkorb innerhalb des Ziels, deshalb liegt er
 # daneben. Ist das Ziel ein Volume-Wurzelordner, landet "daneben" aber auf einer
 # anderen Platte - dann wird aus dem Verschieben ein echtes Kopieren, und im
-# schlimmsten Fall laeuft die Systemplatte voll.
+# schlimmsten Fall läuft die Systemplatte voll.
 TRASH_ANDERES_VOLUME=0
 if [ "$OPT_TRASH" -eq 1 ] && [ "$DEST_REMOTE" -eq 0 ]; then
   GERAET_ZIEL="$(df -Pk "$DF_PFAD" 2>/dev/null | awk 'NR==2 {print $1}')"
@@ -395,8 +395,8 @@ QUELL_BYTES=""
 FREI_BYTES=""
 
 echo "Ermittle den Umfang der Quelle …"
-# Mit denselben Ausschluessen wie der Umzug selbst, sonst nennt die Uebersicht
-# eine Dateizahl, die spaeter niemand wiederfindet.
+# Mit denselben Ausschlüssen wie der Umzug selbst, sonst nennt die Übersicht
+# eine Dateizahl, die später niemand wiederfindet.
 SIZE_ARGS=(size "$SRC" --json)
 if [ "$OPT_JUNK" -eq 1 ]; then
   for muster in "${JUNK_PATTERNS[@]}"; do
@@ -432,9 +432,9 @@ echo "  Nach:  $DEST"
 echo
 if [ -n "$QUELL_DATEIEN" ]; then
   echo "  Dateien in der Quelle: $QUELL_DATEIEN"
-  echo "  Gesamtgroesse:         $(menschlich "${QUELL_BYTES:-0}")"
+  echo "  Gesamtgröße:         $(menschlich "${QUELL_BYTES:-0}")"
 else
-  warnung "  Umfang der Quelle liess sich nicht ermitteln."
+  warnung "  Umfang der Quelle ließ sich nicht ermitteln."
 fi
 if [ -n "$FREI_BYTES" ]; then
   echo "  Frei am Ziel:          $(menschlich "$FREI_BYTES")"
@@ -444,27 +444,27 @@ echo
 if [ "$DEST_ERSTELLT" -eq 1 ]; then
   echo "  Der Zielordner wurde neu angelegt."
 elif [ "$DEST_ERSTELLT" -eq 2 ]; then
-  echo "  Den Zielordner gibt es noch nicht, er wuerde angelegt."
+  echo "  Den Zielordner gibt es noch nicht, er würde angelegt."
 elif [ "$DEST_REMOTE" -eq 0 ] && [ "$ZIEL_LEER" -eq 0 ]; then
   warnung "  Der Zielordner ist NICHT leer. Es liegt bereits etwas darin."
-  echo "  Gleichnamige Dateien werden ueberschrieben, alles andere bleibt."
+  echo "  Gleichnamige Dateien werden überschrieben, alles andere bleibt."
 fi
 
 if [ "$SRC_REMOTE" -eq 1 ] || [ "$DEST_REMOTE" -eq 1 ]; then
   warnung "  Mindestens ein Pfad ist ein rclone-Remote."
-  echo "  Pruefungen auf Erreichbarkeit, Platz und Verschachtelung entfallen."
+  echo "  Prüfungen auf Erreichbarkeit, Platz und Verschachtelung entfallen."
 fi
 
 if [ "$OPT_TRASH" -eq 1 ]; then
   echo "  Papierkorb:  $TRASH"
   if [ "$TRASH_ANDERES_VOLUME" -eq 1 ]; then
     warnung "  Der Papierkorb liegt auf einem anderen Volume als das Ziel."
-    echo "  Ueberschriebene Dateien werden dorthin kopiert statt verschoben."
-    echo "  Bei einem Ziel wie /Volumes/NAS/Ordner statt /Volumes/NAS faellt das weg."
+    echo "  Überschriebene Dateien werden dorthin kopiert statt verschoben."
+    echo "  Bei einem Ziel wie /Volumes/NAS/Ordner statt /Volumes/NAS fällt das weg."
     echo "  Alternativ +chucknorris, dann gibt es gar keinen Papierkorb."
   fi
 else
-  warnung "  Kein Papierkorb (+chucknorris). Ueberschriebene Dateien sind weg."
+  warnung "  Kein Papierkorb (+chucknorris). Überschriebene Dateien sind weg."
 fi
 if [ "$OPT_LOG" -eq 1 ]; then
   echo "  Protokoll:   $LOG"
@@ -474,7 +474,7 @@ else
   echo "  Protokoll:   aus (-report)"
 fi
 if [ "$OPT_JUNK" -eq 1 ]; then
-  echo "  Systemdateien wie .DS_Store und ._* bleiben zurueck."
+  echo "  Systemdateien wie .DS_Store und ._* bleiben zurück."
 else
   echo "  Auch Systemdateien werden mitgenommen (+alles)."
 fi
@@ -486,7 +486,7 @@ if [ -n "$OPT_PARALLEL" ]; then
 fi
 if [ "$OPT_MD5" -eq 1 ]; then
   echo "  +md5: fehlende .md5-Dateien werden in der QUELLE angelegt,"
-  echo "        danach prueft md5check das Ziel."
+  echo "        danach prüft md5check das Ziel."
 fi
 if [ "$OPT_VERIFY" -eq 1 ]; then
   echo "  +verify: rclone vergleicht danach Quelle und Ziel."
@@ -497,7 +497,7 @@ if [ "$OPT_DRY" -eq 1 ]; then
 fi
 echo "════════════════════════════════════════════════════════════"
 
-# Platzwarnung erst nach der Uebersicht, damit sie direkt vor der Frage steht.
+# Platzwarnung erst nach der Übersicht, damit sie direkt vor der Frage steht.
 if [ -n "$FREI_BYTES" ] && [ -n "$QUELL_BYTES" ] && [ "$QUELL_BYTES" -gt "$FREI_BYTES" ]; then
   echo
   warnung "Am Ziel sind weniger als $(menschlich "$QUELL_BYTES") frei."
@@ -517,12 +517,12 @@ fi
 if [ "$OPT_MD5" -eq 1 ] && [ "$OPT_DRY" -eq 0 ]; then
   if command -v md5er >/dev/null 2>&1; then
     echo
-    echo "👨‍💻 Lege fehlende Pruefsummen in der Quelle an …"
+    echo "👨‍💻 Lege fehlende Prüfsummen in der Quelle an …"
     if ! md5er "$SRC"; then
-      warnung "md5er meldete Probleme. Der Umzug laeuft trotzdem weiter."
+      warnung "md5er meldete Probleme. Der Umzug läuft trotzdem weiter."
     fi
   else
-    warnung "md5er nicht gefunden, Pruefsummen werden nicht angelegt."
+    warnung "md5er nicht gefunden, Prüfsummen werden nicht angelegt."
     OPT_MD5=0
   fi
 fi
@@ -589,7 +589,7 @@ if [ "$OPT_DRY" -eq 0 ] && [ "$RCLONE_RC" -eq 0 ] && [ "$OPT_VERIFY" -eq 1 ]; th
     done
   fi
   if rclone "${CHECK_ARGS[@]}"; then
-    printf "${GREEN}Vergleich sauber: das Ziel enthaelt alles aus der Quelle.${NC}\n"
+    printf "${GREEN}Vergleich sauber: das Ziel enthält alles aus der Quelle.${NC}\n"
   else
     printf "${RED}Vergleich nicht bestanden.${NC}\n"
     PRUEFUNG_RC=1
@@ -600,13 +600,13 @@ fi
 if [ "$OPT_DRY" -eq 0 ] && [ "$RCLONE_RC" -eq 0 ] && [ "$OPT_MD5" -eq 1 ]; then
   if command -v md5check >/dev/null 2>&1; then
     echo
-    echo "👨‍💻 Pruefe die Pruefsummen am Ziel …"
+    echo "👨‍💻 Prüfe die Prüfsummen am Ziel …"
     if ! md5check "$DEST"; then
       PRUEFUNG_RC=1
     fi
     PRUEFUNG_GELAUFEN=1
   else
-    warnung "md5check nicht gefunden, das Ziel wurde nicht geprueft."
+    warnung "md5check nicht gefunden, das Ziel wurde nicht geprüft."
   fi
 fi
 
@@ -630,8 +630,8 @@ if [ "$OPT_LOG" -eq 1 ] && [ -f "$LOG" ]; then
 fi
 if [ "$PAPIERKORB_INHALT" -eq 1 ]; then
   echo "Papierkorb: $TRASH"
-  echo "  Dort liegen die alten Fassungen ueberschriebener Dateien."
-  echo "  Wenn die Pruefung sauber war, kann der Ordner weg."
+  echo "  Dort liegen die alten Fassungen überschriebener Dateien."
+  echo "  Wenn die Prüfung sauber war, kann der Ordner weg."
 fi
 
 if [ "$OPT_DRY" -eq 1 ]; then
@@ -644,25 +644,25 @@ if [ "$RCLONE_RC" -ne 0 ]; then
   echo
   printf "${RED}Der Umzug ist nicht sauber durchgelaufen.${NC}\n"
   echo "Denselben Befehl noch einmal aufrufen, es wird dort weitergemacht,"
-  echo "wo es aufgehoert hat. Was schiefging, steht im Protokoll."
+  echo "wo es aufgehört hat. Was schiefging, steht im Protokoll."
   exit 1
 fi
 
 if [ "$PRUEFUNG_RC" -ne 0 ]; then
   echo
-  printf "${RED}Uebertragen, aber die Pruefung ist nicht sauber.${NC}\n"
-  echo "Die Quelle bitte auf keinen Fall anfassen, bevor das geklaert ist."
+  printf "${RED}Übertragen, aber die Prüfung ist nicht sauber.${NC}\n"
+  echo "Die Quelle bitte auf keinen Fall anfassen, bevor das geklärt ist."
   exit 1
 fi
 
 echo
 if [ "$PRUEFUNG_GELAUFEN" -eq 1 ]; then
-  printf "${GREEN}Umzug abgeschlossen und geprueft.${NC}\n"
+  printf "${GREEN}Umzug abgeschlossen und geprüft.${NC}\n"
 else
   printf "${GREEN}Umzug abgeschlossen.${NC}\n"
-  echo "Nicht geprueft. Ein Nachweis geht mit:"
+  echo "Nicht geprüft. Ein Nachweis geht mit:"
   echo "  lfs_umzug \"$SRC\" \"$DEST\" +md5"
-  echo "oder, wenn schon Pruefsummen vorliegen:"
+  echo "oder, wenn schon Prüfsummen vorliegen:"
   echo "  md5check \"$DEST\""
 fi
 
