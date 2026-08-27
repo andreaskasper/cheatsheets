@@ -1,178 +1,200 @@
 #!/usr/bin/env php
 <?php
 /**
- * LFS Files to CSV - Enhanced Video Metadata Extractor
- * 
- * Recursively scans directories for video files and extracts metadata using FFmpeg/FFprobe.
- * Exports data to CSV, JSON, or XML formats with resume capability and progress tracking.
- * 
- * Author: Andreas Kasper (enhanced by Claude)
- * Version: 3.0.2
- * 
- * Usage:
- *   ./lfs_files2csv <directory> [options]
- * 
- * Options:
- *   +md5           - Calculate MD5/SHA1 checksums (slower)
- *   +json          - Output as JSON instead of CSV
- *   +xml           - Output as XML instead of CSV
- *   +dry           - Dry run mode (show what would be processed)
- *   +quiet         - Minimal output
- *   +verbose       - Detailed output
- *   +resume        - Resume from previous interrupted run
- *   +exclude=pattern - Exclude paths containing pattern (can be used multiple times)
- * 
- * Examples:
- *   ./lfs_files2csv /path/to/videos
- *   ./lfs_files2csv /path/to/videos +md5 +json +verbose
- *   ./lfs_files2csv /path/to/videos +exclude=temp +exclude=backup +dry
+ * LFS Files to CSV - Video-Metadaten fuer die Bestandserfassung
+ *
+ * Durchsucht einen Ordner rekursiv nach Videodateien und liest die Metadaten
+ * mit ffprobe aus. Ergebnis als CSV, JSON oder XML, mit Wiederaufnahme nach
+ * Abbruch.
+ *
+ * Ein Skript fuer Manuel vom Haus des Dokumentarfilms
+ * Autor: Andreas Kasper <andreas.kasper@goo1.de>
+ * Version: siehe VERSION
+ *
+ * Aufruf:
+ *   lfs_files2csv <ordner> [optionen]
+ *
+ * Optionen: siehe --help
  */
 
-// ================ CONFIGURATION ================
-const SUPPORTED_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mpg', '.mpeg', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.asf'];
-const FFPROBE_PATHS = ['/usr/local/bin/ffprobe', '/usr/bin/ffprobe', 'ffprobe'];
-const FFMPEG_PATHS = ['/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg', 'ffmpeg'];
-const PROGRESS_FILE_SUFFIX = '.lfs_progress';
-const MAX_PARALLEL_JOBS = 3; // For future parallel processing
+// Der Speicherbedarf waechst seit 3.1.0 nicht mehr mit der Dateizahl: der
+// Verzeichnisbaum wird streamend verarbeitet und die Fortschrittsliste
+// zeilenweise angehaengt statt jedes Mal komplett neu serialisiert. Das Limit
+// hier ist nur noch der Sicherheitsgurt fuer einzelne sehr grosse
+// ffprobe-Ausgaben (Material mit hunderten Streams oder Kapiteln).
+ini_set('memory_limit', '-1');
 
-// ================ GLOBAL VARIABLES ================
+// ================ KONFIGURATION ================
+const VERSION = '3.1.0';
+
+const SUPPORTED_EXTENSIONS = [
+    // bis 3.0.2 bekannt
+    '.mp4', '.mov', '.avi', '.mpg', '.mpeg', '.mkv', '.wmv', '.flv', '.webm',
+    '.m4v', '.3gp', '.asf',
+    // ab 3.1.0: in Fernseh- und Kameraarchiven ueblich
+    '.mxf', '.mts', '.m2ts', '.dv', '.vob', '.ts', '.m2v', '.ogv', '.rm',
+];
+
+const FFPROBE_PATHS = ['/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe', 'ffprobe'];
+const FFMPEG_PATHS  = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg', 'ffmpeg'];
+
+const PROGRESS_FILE_PREFIX = '.lfs_progress_';
+const PROGRESS_FILE_SUFFIX = '.jsonl';
+
+const UPDATER_NAME = 'update-andiscripts.sh';
+
+// ================ GLOBALE VARIABLEN ================
 $config = [
-    'directory' => '',
+    'directory'        => '',
+    'directory_real'   => '',
     'checksum_enabled' => false,
-    'output_format' => 'csv',
-    'dry_run' => false,
-    'verbose_level' => 1, // 0=quiet, 1=normal, 2=verbose
-    'resume' => false,
+    'output_format'    => 'csv',
+    'dry_run'          => false,
+    'verbose_level'    => 1, // 0=quiet, 1=normal, 2=verbose
+    'resume'           => false,
+    'raw_data'         => false,
     'exclude_patterns' => [],
-    'ffprobe_path' => '',
-    'ffmpeg_path' => '',
-    'info_level' => 'standard', // standard/more/max/full
+    'ffprobe_path'     => '',
+    'ffmpeg_path'      => '',
+    'info_level'       => 'standard', // standard/more/max/full
 ];
 
 $stats = [
     'total_files_found' => 0,
     'video_files_found' => 0,
-    'files_processed' => 0,
-    'files_skipped' => 0,
-    'errors' => 0,
-    'start_time' => 0,
-    'total_size' => 0,
+    'files_processed'   => 0,
+    'files_skipped'     => 0,
+    'errors'            => 0,
+    'start_time'        => 0,
+    'total_size'        => 0,
 ];
 
-$processed_files = [];
-$output_file = '';
-$progress_file = '';
+$processed_files  = [];   // Pfad => true, nur bei +resume gefuellt
+$entries_written  = 0;    // bereits in die Ausgabedatei geschriebene Datensaetze
+$output_file      = '';
+$progress_file    = '';
+$progress_handle  = null;
+$counting_pass    = false;
+$resumed          = false; // true nur, wenn ein alter Lauf wirklich fortgesetzt wird
 
-// ================ MAIN EXECUTION ================
+// ================ ABLAUF ================
 main();
 
 function main() {
-    global $config, $stats, $output_file, $progress_file;
-    
+    global $config, $stats, $output_file;
+
     $stats['start_time'] = time();
-    
-    // Parse command line arguments
+
     if (!parseArguments()) {
         exit(1);
     }
-    
-    // Find FFmpeg/FFprobe executables
+
     if (!findFFmpegTools()) {
-        error("FFmpeg/FFprobe not found. Please install FFmpeg.", true);
+        error("ffprobe nicht gefunden. Bitte ffmpeg installieren (brew install ffmpeg).", true);
     }
-    
-    // Setup output and progress files
+
     setupFiles();
-    
-    // Load progress if resuming
-    if ($config['resume']) {
-        loadProgress();
-    }
-    
-    output("=== LFS Files to CSV v3.0.2 ===", 1);
-    output("Directory: " . $config['directory'], 1);
-    output("Output format: " . strtoupper($config['output_format']), 1);
-    output("Info level: " . $config['info_level'], 1);
-    output("Output file: " . basename($output_file), 1);
-    
+
+    output("=== LFS Files to CSV v" . VERSION . " ===", 1);
+    output("Ordner: " . $config['directory'], 1);
+    output("Ausgabeformat: " . strtoupper($config['output_format']), 1);
+    output("Detailgrad: " . $config['info_level'], 1);
+    output("Ausgabedatei: " . $output_file, 1);
+
     if ($config['dry_run']) {
-        output("DRY RUN MODE - No files will be processed", 1);
+        output("TROCKENLAUF - es wird nichts geschrieben", 1);
     }
-    
+    if ($config['raw_data']) {
+        output("Rohdaten-Spalte aktiv (+raw)", 1);
+    }
     if (!empty($config['exclude_patterns'])) {
-        output("Exclude patterns: " . implode(', ', $config['exclude_patterns']), 1);
+        output("Ausgeschlossen: " . implode(', ', $config['exclude_patterns']), 1);
     }
-    
     output("", 1);
-    
-    // Scan directory for files
-    $all_files = scanDirectoryRecursive($config['directory']);
-    $video_files = filterVideoFiles($all_files);
-    
-    $stats['total_files_found'] = count($all_files);
-    $stats['video_files_found'] = count($video_files);
-    
-    output("Found " . $stats['total_files_found'] . " total files", 1);
-    output("Found " . $stats['video_files_found'] . " video files", 1);
+
+    // Erster Durchlauf: nur zaehlen. Speichert keine Pfade, wird aber fuer die
+    // Prozentanzeige gebraucht.
+    output("Zaehle Dateien ...", 1);
+    list($total_files, $video_files) = countFiles($config['directory']);
+    $stats['total_files_found'] = $total_files;
+    $stats['video_files_found'] = $video_files;
+
+    output("Gefunden: " . number_format($total_files, 0, ',', '.') . " Dateien insgesamt", 1);
+    output("Davon Video: " . number_format($video_files, 0, ',', '.'), 1);
     output("", 1);
-    
-    if ($stats['video_files_found'] == 0) {
-        output("No video files found.", 1);
+
+    if ($video_files === 0) {
+        output("Keine Videodateien gefunden.", 1);
         exit(0);
     }
-    
-    // Initialize output file
+
     if (!$config['dry_run']) {
         initializeOutputFile();
+        openProgressLog();
     }
-    
-    // Process files
+
+    // Zweiter Durchlauf: verarbeiten, streamend.
     processVideoFiles($video_files);
-    
-    // Finalize output
+
     if (!$config['dry_run']) {
         finalizeOutputFile();
     }
-    
-    // Show statistics
+
     showStatistics();
-    
-    // Cleanup
     cleanup();
+
+    // Rueckgabewert 1, wenn mindestens eine Datei nicht gelesen werden konnte.
+    // Damit laesst sich ein Lauf in einem groesseren Ablauf bewerten, ohne die
+    // Bildschirmausgabe zu durchsuchen.
+    exit($stats['errors'] > 0 ? 1 : 0);
 }
 
+// ================ ARGUMENTE ================
 function parseArguments() {
     global $argv, $config;
-    
+
     if (count($argv) < 2) {
         showUsage();
         return false;
     }
-    
-    // Check for help and version flags first
+
     for ($i = 1; $i < count($argv); $i++) {
         $arg = $argv[$i];
-        if (in_array($arg, ['--help', '-h', 'help', '?'])) {
+        if (in_array($arg, ['--help', '-h', 'help', '?'], true)) {
             showUsage();
-            return false;
+            exit(0);
         }
-        if (in_array($arg, ['--version', '-v', 'version'])) {
+        if (in_array($arg, ['--version', '-v', 'version'], true)) {
             showVersion();
+            exit(0);
+        }
+        if (in_array($arg, ['update', 'upgrade'], true)) {
+            runUpdater();
             return false;
         }
     }
-    
-    $config['directory'] = rtrim($argv[1], '/');
-    
+
+    // Ein einzelner Schraegstrich darf nicht zu einem leeren Pfad werden.
+    $dir = $argv[1];
+    if ($dir !== '/') {
+        $dir = rtrim($dir, '/');
+    }
+    if ($dir === '') {
+        $dir = '.';
+    }
+    $config['directory'] = $dir;
+
     if (!is_dir($config['directory'])) {
-        error("Directory '" . $config['directory'] . "' does not exist or is not accessible.", true);
+        error("Ordner '" . $config['directory'] . "' existiert nicht oder ist nicht lesbar.", true);
         return false;
     }
-    
-    // Parse options
+
+    $real = realpath($config['directory']);
+    $config['directory_real'] = ($real === false) ? $config['directory'] : $real;
+
     for ($i = 2; $i < count($argv); $i++) {
         $arg = $argv[$i];
-        
+
         switch ($arg) {
             case '+md5':
                 $config['checksum_enabled'] = true;
@@ -195,450 +217,544 @@ function parseArguments() {
             case '+resume':
                 $config['resume'] = true;
                 break;
+            case '+raw':
+                $config['raw_data'] = true;
+                break;
             default:
                 if (strpos($arg, '+exclude=') === 0) {
                     $pattern = substr($arg, 9);
-                    if (!empty($pattern)) {
+                    if ($pattern !== '') {
                         $config['exclude_patterns'][] = $pattern;
                     }
                 } elseif (strpos($arg, '+info=') === 0) {
                     $level = substr($arg, 6);
-                    if (in_array($level, ['standard', 'more', 'max', 'full'])) {
+                    if (in_array($level, ['standard', 'more', 'max', 'full'], true)) {
                         $config['info_level'] = $level;
                     } else {
-                        error("Invalid info level: $level (use: standard/more/max/full)", false);
+                        error("Unbekannter Detailgrad: $level (moeglich: standard/more/max/full)", true);
                     }
                 } else {
-                    error("Unknown option: $arg", false);
+                    error("Unbekannte Option: $arg", true);
                 }
         }
     }
-    
+
     return true;
 }
 
 function showUsage() {
-    echo "Usage: " . basename($GLOBALS['argv'][0]) . " <directory> [options]\n\n";
-    echo "Options:\n";
-    echo "  +md5           Calculate MD5/SHA1 checksums (slower)\n";
-    echo "  +json          Output as JSON instead of CSV\n";
-    echo "  +xml           Output as XML instead of CSV\n";
-    echo "  +dry           Dry run mode (show what would be processed)\n";
-    echo "  +quiet         Minimal output\n";
-    echo "  +verbose       Detailed output\n";
-    echo "  +resume        Resume from previous interrupted run\n";
-    echo "  +exclude=pattern  Exclude paths containing pattern\n";
-    echo "  +info=level    Information detail level (performance-based):\n";
-    echo "                   standard - Fast basic metadata (default)\n";
-    echo "                   more     - + Audio data, extended video properties\n";
-    echo "                   max      - + Quality analysis, technical details\n";
-    echo "                   full     - + All streams, diagnostics, raw data\n\n";
-    echo "Help options:\n";
-    echo "  --help, -h     Show this help message\n";
-    echo "  --version, -v  Show version information\n\n";
-    echo "Examples:\n";
-    echo "  ./lfs_files2csv /path/to/videos\n";
-    echo "  ./lfs_files2csv /videos +info=more +json\n";
-    echo "  ./lfs_files2csv /videos +info=max +md5 +verbose\n";
-    echo "  ./lfs_files2csv . +info=full +exclude=temp +dry\n\n";
-    echo "Performance guide:\n";
-    echo "  standard: ~0.1s per file  |  more: ~0.2s per file\n";
-    echo "  max: ~0.5s per file       |  full: ~1-2s per file\n\n";
+    echo "Verwendung: " . basename($GLOBALS['argv'][0]) . " <ordner> [optionen]\n\n";
+    echo "Liest alle Videodateien unterhalb von <ordner> und schreibt ihre\n";
+    echo "Metadaten in eine Tabelle. Die Ausgabedatei landet im uebergeordneten\n";
+    echo "Ordner von <ordner>.\n\n";
+    echo "Optionen:\n";
+    echo "  +md5              MD5- und SHA1-Pruefsumme berechnen (deutlich langsamer)\n";
+    echo "  +json             Ausgabe als JSON statt CSV\n";
+    echo "  +xml              Ausgabe als XML statt CSV\n";
+    echo "  +raw              Komplette ffprobe-Ausgabe als zusaetzliche Spalte\n";
+    echo "  +dry              Trockenlauf, zeigt nur was passieren wuerde\n";
+    echo "  +quiet            Nur das Noetigste ausgeben\n";
+    echo "  +verbose          Ausfuehrliche Ausgabe\n";
+    echo "  +resume           Abgebrochenen Lauf fortsetzen\n";
+    echo "  +exclude=muster   Pfade mit diesem Textbestandteil ueberspringen\n";
+    echo "  +info=stufe       Detailgrad (wirkt sich auf die Laufzeit aus):\n";
+    echo "                      standard - Basisdaten, schnell (Voreinstellung)\n";
+    echo "                      more     - zusaetzlich Ton und erweiterte Bilddaten\n";
+    echo "                      max      - zusaetzlich Qualitaets- und Technikwerte\n";
+    echo "                      full     - zusaetzlich alle Streams und Diagnose\n\n";
+    echo "Weitere Befehle:\n";
+    echo "  --help, -h        Diese Hilfe\n";
+    echo "  --version, -v     Versionsinformationen\n";
+    echo "  update            Alle Skripte aktualisieren\n\n";
+    echo "Rueckgabewert:\n";
+    echo "  0  alle gefundenen Videodateien wurden gelesen\n";
+    echo "  1  mindestens eine Datei liess sich nicht lesen, oder Aufruffehler\n";
+    echo "     In dem Fall bleibt die Fortschrittsdatei liegen und der Lauf laesst\n";
+    echo "     sich mit +resume wiederholen.\n\n";
+    echo "Beispiele:\n";
+    echo "  lfs_files2csv /Volumes/Archiv/2024\n";
+    echo "  lfs_files2csv /Volumes/Archiv/2024 +info=more +json\n";
+    echo "  lfs_files2csv /Volumes/Archiv/2024 +info=max +md5 +verbose\n";
+    echo "  lfs_files2csv /Volumes/Archiv/2024 +exclude=Proxy +dry\n";
+    echo "  lfs_files2csv /Volumes/Archiv/2024 +resume\n\n";
+    echo "Richtwerte pro Datei:\n";
+    echo "  standard ~0,1s   more ~0,2s   max ~0,5s   full ~1-2s\n";
+    echo "  +md5 liest jede Datei komplett und dauert entsprechend laenger.\n\n";
 }
 
 function showVersion() {
-    echo "LFS Files to CSV - Enhanced Video Metadata Extractor\n";
-    echo "Version: 3.0.2\n";
-    echo "Author: Andreas Kasper (enhanced by Claude)\n";
-    echo "License: Open Source\n\n";
-    echo "Features:\n";
-    echo "  • Recursive directory scanning\n";
-    echo "  • 12 video format support (.mp4, .mov, .avi, .mpg, .mpeg, .mkv, .wmv, .flv, .webm, .m4v, .3gp, .asf)\n";
-    echo "  • Multiple output formats (CSV, JSON, XML)\n";
-    echo "  • Resume functionality\n";
-    echo "  • Progress tracking with statistics\n";
-    echo "  • Exclude patterns\n";
-    echo "  • Checksum calculation (MD5/SHA1)\n";
-    echo "  • Cross-platform compatibility\n\n";
-    echo "Requirements:\n";
-    echo "  • PHP 7.0+\n";
-    echo "  • FFmpeg/FFprobe\n\n";
+    echo "LFS Files to CSV - Video-Metadaten fuer die Bestandserfassung\n";
+    echo "Version: " . VERSION . "\n";
+    echo "Autor: Andreas Kasper <andreas.kasper@goo1.de>\n\n";
+    echo "Erkannte Endungen (" . count(SUPPORTED_EXTENSIONS) . "):\n";
+    echo "  " . implode(' ', SUPPORTED_EXTENSIONS) . "\n\n";
+    echo "Voraussetzungen: PHP 7.0 oder neuer, ffprobe (Teil von ffmpeg)\n\n";
 }
 
+function runUpdater() {
+    $candidates = [
+        dirname(realpath($GLOBALS['argv'][0]) ?: $GLOBALS['argv'][0]) . '/' . UPDATER_NAME,
+        '/usr/local/bin/' . UPDATER_NAME,
+        '/opt/homebrew/bin/' . UPDATER_NAME,
+    ];
+
+    $found = '';
+    foreach ($candidates as $candidate) {
+        if (is_file($candidate) && is_executable($candidate)) {
+            $found = $candidate;
+            break;
+        }
+    }
+
+    if ($found === '') {
+        $out = []; $rc = 1;
+        exec('command -v ' . escapeshellarg(UPDATER_NAME) . ' 2>/dev/null', $out, $rc);
+        if ($rc === 0 && !empty($out[0])) {
+            $found = $out[0];
+        }
+    }
+
+    if ($found === '') {
+        error(UPDATER_NAME . " nicht gefunden. Bitte einmalig manuell installieren.", true);
+    }
+
+    passthru(escapeshellarg($found), $code);
+    exit($code);
+}
+
+// ================ FFPROBE ================
 function findFFmpegTools() {
     global $config;
-    
-    // Find ffprobe
+
     foreach (FFPROBE_PATHS as $path) {
         if (isExecutableAvailable($path)) {
             $config['ffprobe_path'] = $path;
             break;
         }
     }
-    
-    // Find ffmpeg
+
+    // ffmpeg wird derzeit nicht aufgerufen, nur mitgeteilt. Ein fehlendes
+    // ffmpeg darf den Lauf deshalb nicht verhindern.
     foreach (FFMPEG_PATHS as $path) {
         if (isExecutableAvailable($path)) {
             $config['ffmpeg_path'] = $path;
             break;
         }
     }
-    
-    return !empty($config['ffprobe_path']) && !empty($config['ffmpeg_path']);
+
+    return $config['ffprobe_path'] !== '';
 }
 
 function isExecutableAvailable($path) {
-    exec("which $path 2>/dev/null", $output, $return_code);
-    if ($return_code === 0) return true;
-    
-    exec("$path -version 2>/dev/null", $output, $return_code);
-    return $return_code === 0;
+    $out = [];
+    $rc  = 1;
+    exec('command -v ' . escapeshellarg($path) . ' 2>/dev/null', $out, $rc);
+    if ($rc === 0) {
+        return true;
+    }
+
+    $out = [];
+    $rc  = 1;
+    exec(escapeshellarg($path) . ' -version 2>/dev/null', $out, $rc);
+    return $rc === 0;
 }
 
+// ================ DATEIEN UND FORTSCHRITT ================
 function setupFiles() {
-    global $config, $output_file, $progress_file;
-    
-    $timestamp = date("Ymd") . "T" . date("His");
-    $extension = $config['output_format'];
-    
-    $output_file = dirname($config['directory']) . "/archiv_" . $timestamp . "." . $extension;
-    $progress_file = dirname($config['directory']) . "/archiv_" . $timestamp . PROGRESS_FILE_SUFFIX;
-    
-    // Check if output file exists
-    if (file_exists($output_file)) {
-        if (!$config['dry_run']) {
-            $response = readline("Output file already exists. Overwrite? (y/N): ");
-            if (strtolower($response) !== 'y') {
-                output("Aborted.", 1);
-                exit(0);
-            }
+    global $config, $output_file, $progress_file, $processed_files, $entries_written, $resumed;
+
+    $parent = dirname($config['directory_real']);
+    $progress_file = $parent . '/' . PROGRESS_FILE_PREFIX
+        . substr(md5($config['directory_real']), 0, 12) . PROGRESS_FILE_SUFFIX;
+
+    if ($config['resume'] && is_file($progress_file)) {
+        $header = readProgressHeader($progress_file);
+        if ($header === null) {
+            output("Fortschrittsdatei unlesbar, der Lauf beginnt von vorn.", 1);
+        } elseif (!progressMatchesConfig($header)) {
+            output("Fortschrittsdatei gehoert zu anderen Einstellungen, der Lauf beginnt von vorn.", 1);
+            output("  gespeichert: " . describeProgressHeader($header), 2);
+        } else {
+            $output_file = $header['output_file'];
+            $processed_files = readProgressEntries($progress_file);
+            $entries_written = count($processed_files);
+            $resumed = true;
+            output("Wiederaufnahme: " . number_format($entries_written, 0, ',', '.')
+                . " Dateien bereits erledigt.", 1);
+            output("Es wird weitergeschrieben in: " . $output_file, 1);
+            return;
+        }
+    } elseif ($config['resume']) {
+        output("Keine Fortschrittsdatei gefunden, der Lauf beginnt von vorn.", 1);
+    }
+
+    $timestamp   = date('Ymd') . 'T' . date('His');
+    $output_file = $parent . '/archiv_' . $timestamp . '.' . $config['output_format'];
+
+    if (file_exists($output_file) && !$config['dry_run']) {
+        $answer = promptYesNo("Ausgabedatei existiert bereits. Ueberschreiben?");
+        if (!$answer) {
+            output("Abgebrochen.", 1);
+            exit(0);
         }
     }
 }
 
-function loadProgress() {
-    global $processed_files, $progress_file;
-    
-    if (file_exists($progress_file)) {
-        $data = file_get_contents($progress_file);
-        $processed_files = json_decode($data, true) ?: [];
-        output("Resuming: " . count($processed_files) . " files already processed", 1);
+function progressMatchesConfig($header) {
+    global $config;
+
+    if (!isset($header['output_file']) || !is_file($header['output_file'])) {
+        return false;
+    }
+
+    $keys = [
+        'output_format' => $config['output_format'],
+        'info_level'    => $config['info_level'],
+        'checksum'      => $config['checksum_enabled'],
+        'raw_data'      => $config['raw_data'],
+        'directory'     => $config['directory_real'],
+    ];
+
+    foreach ($keys as $key => $value) {
+        if (!array_key_exists($key, $header) || $header[$key] !== $value) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function describeProgressHeader($header) {
+    return sprintf(
+        'Format=%s, Detailgrad=%s, md5=%s, raw=%s',
+        $header['output_format'] ?? '?',
+        $header['info_level'] ?? '?',
+        !empty($header['checksum']) ? 'ja' : 'nein',
+        !empty($header['raw_data']) ? 'ja' : 'nein'
+    );
+}
+
+function readProgressHeader($path) {
+    $handle = @fopen($path, 'r');
+    if ($handle === false) {
+        return null;
+    }
+    $line = fgets($handle);
+    fclose($handle);
+    if ($line === false) {
+        return null;
+    }
+    $header = json_decode(trim($line), true);
+    return is_array($header) ? $header : null;
+}
+
+function readProgressEntries($path) {
+    $entries = [];
+    $handle  = @fopen($path, 'r');
+    if ($handle === false) {
+        return $entries;
+    }
+
+    fgets($handle); // Kopfzeile ueberspringen
+    while (($line = fgets($handle)) !== false) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        $decoded = json_decode($line, true);
+        if (is_string($decoded)) {
+            $entries[$decoded] = true;
+        }
+    }
+    fclose($handle);
+
+    return $entries;
+}
+
+function openProgressLog() {
+    global $progress_file, $progress_handle, $config, $output_file, $resumed;
+
+    // Nur wenn wirklich fortgesetzt wird, darf an die alte Datei angehaengt
+    // werden. Sonst gehoert die Kopfzeile zu einem anderen Lauf.
+    $is_new = !$resumed || !is_file($progress_file);
+
+    $progress_handle = @fopen($progress_file, $is_new ? 'w' : 'a');
+    if ($progress_handle === false) {
+        error("Fortschrittsdatei nicht beschreibbar: $progress_file", false);
+        error("Der Lauf geht weiter, +resume wird danach aber nicht funktionieren.", false);
+        $progress_handle = null;
+        return;
+    }
+
+    if ($is_new) {
+        $header = [
+            'version'       => VERSION,
+            'directory'     => $config['directory_real'],
+            'output_file'   => $output_file,
+            'output_format' => $config['output_format'],
+            'info_level'    => $config['info_level'],
+            'checksum'      => $config['checksum_enabled'],
+            'raw_data'      => $config['raw_data'],
+            'started'       => date('c'),
+        ];
+        fwrite($progress_handle, json_encode($header) . "\n");
+        fflush($progress_handle);
     }
 }
 
 function saveProgress($file_path) {
-    global $processed_files, $progress_file, $config;
-    
-    if ($config['dry_run']) return;
-    
-    $processed_files[] = $file_path;
-    file_put_contents($progress_file, json_encode($processed_files));
+    global $progress_handle;
+
+    if ($progress_handle === null) {
+        return;
+    }
+
+    // Eine Zeile anhaengen, nichts neu serialisieren. Genau das war bis 3.0.2
+    // die Ursache dafuer, dass der Speicher bei grossen Bestaenden ausging.
+    fwrite($progress_handle, json_encode($file_path) . "\n");
+    fflush($progress_handle);
 }
 
-function scanDirectoryRecursive($dir) {
-    global $config, $stats;
-    
-    $files = [];
-    $dirs_to_scan = [$dir];
-    
-    while (!empty($dirs_to_scan)) {
-        $current_dir = array_shift($dirs_to_scan);
-        
-        // Check exclude patterns
-        $excluded = false;
-        foreach ($config['exclude_patterns'] as $pattern) {
-            if (strpos($current_dir, $pattern) !== false) {
-                $excluded = true;
-                output("Excluding directory: $current_dir (matches '$pattern')", 2);
-                break;
+function promptYesNo($question) {
+    if (!function_exists('readline')) {
+        echo $question . " (j/N): ";
+        $line = fgets(STDIN);
+        $answer = ($line === false) ? '' : trim($line);
+    } else {
+        $answer = trim((string)readline($question . " (j/N): "));
+    }
+
+    return in_array(strtolower($answer), ['j', 'ja', 'y', 'yes'], true);
+}
+
+// ================ VERZEICHNIS DURCHLAUFEN ================
+/**
+ * Liefert die Dateipfade einzeln. Im Speicher liegen nur die noch nicht
+ * besuchten Unterordner, nicht die Dateiliste.
+ */
+function iterateFiles($dir) {
+    global $config, $stats, $counting_pass;
+
+    $stack = [$dir];
+
+    while (!empty($stack)) {
+        $current = array_pop($stack);
+
+        if (isExcluded($current)) {
+            if (!$counting_pass) {
+                output("Uebersprungen: $current", 2);
             }
-        }
-        
-        if ($excluded) continue;
-        
-        $items = @scandir($current_dir);
-        if ($items === false) {
-            error("Cannot read directory: $current_dir", false);
-            $stats['errors']++;
             continue;
         }
-        
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') continue;
-            
-            $full_path = $current_dir . '/' . $item;
-            
-            if (is_dir($full_path)) {
-                $dirs_to_scan[] = $full_path;
+
+        $handle = @opendir($current);
+        if ($handle === false) {
+            if (!$counting_pass) {
+                error("Ordner nicht lesbar: $current", false);
+                $stats['errors']++;
+            }
+            continue;
+        }
+
+        $subdirs = [];
+        while (($item = readdir($handle)) !== false) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+
+            $full = $current . '/' . $item;
+
+            if (is_link($full) && is_dir($full)) {
+                // Verknuepfte Ordner nicht verfolgen, sonst laeuft der Scan
+                // bei einer Schleife endlos.
+                if (!$counting_pass) {
+                    output("Symlink auf Ordner uebersprungen: $full", 2);
+                }
+                continue;
+            }
+
+            if (is_dir($full)) {
+                // Versteckte Ordner auslassen, genau wie md5er und md5check es
+                // tun. Auf Mac-Volumes liegen dort .Trashes, .Spotlight-V100
+                // und .fseventsd, deren Inhalt nicht zum Bestand gehoert.
+                if (strpos($item, '.') === 0) {
+                    if (!$counting_pass) {
+                        output("Versteckter Ordner uebersprungen: $full", 2);
+                    }
+                    continue;
+                }
+                $subdirs[] = $full;
             } else {
-                $files[] = $full_path;
+                yield $full;
             }
         }
-    }
-    
-    return $files;
-}
+        closedir($handle);
 
-function filterVideoFiles($files) {
-    $video_files = [];
-    
-    foreach ($files as $file) {
-        $extension = strtolower(substr($file, strrpos($file, '.')));
-        
-        if (in_array($extension, SUPPORTED_EXTENSIONS)) {
-            $video_files[] = $file;
+        foreach ($subdirs as $subdir) {
+            $stack[] = $subdir;
         }
     }
-    
-    return $video_files;
 }
 
-function initializeOutputFile() {
-    global $config, $output_file;
-    
-    switch ($config['output_format']) {
-        case 'csv':
-            $header = getCSVHeader($config['info_level']);
-            file_put_contents($output_file, $header);
-            break;
-        case 'json':
-            file_put_contents($output_file, "[\n");
-            break;
-        case 'xml':
-            $xml_header = '<?xml version="1.0" encoding="UTF-8"?>' . "\n<video_files>\n";
-            file_put_contents($output_file, $xml_header);
-            break;
+function isExcluded($path) {
+    global $config;
+
+    foreach ($config['exclude_patterns'] as $pattern) {
+        if (strpos($path, $pattern) !== false) {
+            return true;
+        }
     }
+
+    return false;
 }
 
-function getCSVHeader($info_level) {
-    // Standard columns (always included)
-    $columns = [
-        'Pfad', 'Datei', 'Dateigroesse', 'Dateigroesse_human', 
-        'Duration', 'Duration_sec', 'Video_Bitrate', 
-        'Video_Codec_lang', 'Video_Codec', 'Breite', 'Höhe', 
-        'Seitenverhältnis', 'Pixelverhältnis', 'Farbraum', 
-        'Pixelformat', 'Framerate', 'Scantype', 'Frames', 
-        'Timecode', 'Erstelldatum'
-    ];
-    
-    // More level: Add audio and extended video properties
-    if (in_array($info_level, ['more', 'max', 'full'])) {
-        $columns = array_merge($columns, [
-            'Audio_Codec', 'Audio_Bitrate', 'Audio_Channels', 
-            'Audio_Samplerate', 'Audio_Language', 'Audio_Streams_Count',
-            'Video_Profile', 'Video_Level', 'Bit_Depth', 
-            'Chroma_Subsampling', 'Encoding_Tool', 'Container_Format'
-        ]);
+function isVideoFile($path) {
+    $name = basename($path);
+
+    // Versteckte Dateien gehoeren nicht zum Bestand. Dazu zaehlen auch die
+    // AppleDouble-Reste (._name.mov) auf exFAT- und Netzlaufwerken: sie heissen
+    // wie das Original, enthalten aber kein Bild.
+    if (strpos($name, '.') === 0) {
+        return false;
     }
-    
-    // Max level: Add quality analysis and technical details  
-    if (in_array($info_level, ['max', 'full'])) {
-        $columns = array_merge($columns, [
-            'GOP_Size', 'B_Frames', 'Total_Bitrate', 'Compression_Ratio',
-            'Quality_Score', 'Subtitle_Tracks', 'Chapter_Count',
-            'File_Permissions', 'Last_Modified', 'Interlace_Detection',
-            'Motion_Level'
-        ]);
+
+    $dot = strrpos($name, '.');
+    if ($dot === false || $dot === 0) {
+        return false;
     }
-    
-    // Full level: Add diagnostics and all stream details
-    if ($info_level === 'full') {
-        $columns = array_merge($columns, [
-            'All_Streams_Count', 'Video_Streams_Count', 'Compliance_Status',
-            'Encoding_Complexity', 'Black_Frames_Start', 'Black_Frames_End',
-            'Scene_Changes', 'Duplicate_Frames', 'Format_Tags',
-            'Muxing_Tool', 'Raw_Analysis_Time'
-        ]);
-    }
-    
-    // Always add checksum and data columns at the end
-    $columns = array_merge($columns, ['md5', 'SHA', 'data']);
-    
-    return implode(';', $columns) . "\n";
+
+    return in_array(strtolower(substr($name, $dot)), SUPPORTED_EXTENSIONS, true);
 }
 
-function processVideoFiles($video_files) {
+function countFiles($dir) {
+    global $counting_pass;
+
+    $counting_pass = true;
+    $total = 0;
+    $video = 0;
+
+    foreach (iterateFiles($dir) as $path) {
+        $total++;
+        if (isVideoFile($path)) {
+            $video++;
+        }
+    }
+
+    $counting_pass = false;
+
+    return [$total, $video];
+}
+
+// ================ VERARBEITUNG ================
+function processVideoFiles($total) {
     global $stats, $processed_files, $config;
-    
-    $total = count($video_files);
+
     $current = 0;
-    
-    foreach ($video_files as $file_path) {
-        $current++;
-        
-        // Skip if already processed (resume functionality)
-        if (in_array($file_path, $processed_files)) {
-            $stats['files_skipped']++;
-            updateProgress($current, $total, basename($file_path) . " (skipped)");
+
+    foreach (iterateFiles($config['directory']) as $file_path) {
+        if (!isVideoFile($file_path)) {
             continue;
         }
-        
+
+        $current++;
+
+        if (isset($processed_files[$file_path])) {
+            $stats['files_skipped']++;
+            updateProgress($current, $total, basename($file_path) . ' (uebersprungen)');
+            continue;
+        }
+
         updateProgress($current, $total, basename($file_path));
-        
+
+        $size = @filesize($file_path);
+        if ($size === false) {
+            $size = 0;
+        }
+
         if ($config['dry_run']) {
-            output("Would process: $file_path", 2);
+            output("\nWuerde verarbeiten: $file_path", 2);
             $stats['files_processed']++;
         } else {
-            $success = processVideoFile($file_path);
-            if ($success) {
+            if (processVideoFile($file_path, $size)) {
                 $stats['files_processed']++;
                 saveProgress($file_path);
             } else {
                 $stats['errors']++;
             }
         }
-        
-        $stats['total_size'] += filesize($file_path);
+
+        $stats['total_size'] += $size;
     }
-    
-    // Clear progress line
+
     if ($config['verbose_level'] > 0) {
         echo "\n";
     }
 }
 
-function processVideoFile($file_path) {
-    global $config, $output_file;
-    
-    $path = dirname($file_path);
-    $filename = basename($file_path);
-    
-    // Get basic file info
-    $file_size = filesize($file_path);
-    $file_size_human = formatBytes($file_size, 1);
-    
-    // Get video metadata using ffprobe
+function processVideoFile($file_path, $file_size) {
+    global $config;
+
     $metadata = getVideoMetadata($file_path);
     if ($metadata === false) {
-        error("Failed to extract metadata from: $file_path", false);
+        error("Metadaten nicht lesbar: $file_path", false);
         return false;
     }
-    
-    // Calculate checksums if enabled
-    $md5 = '';
+
+    $md5  = '';
     $sha1 = '';
     if ($config['checksum_enabled']) {
-        $md5 = md5_file($file_path);
-        $sha1 = sha1_file($file_path);
+        $md5  = (string)md5_file($file_path);
+        $sha1 = (string)sha1_file($file_path);
     }
-    
-    // Prepare data array
-    $data = [
-        'path' => $path,
-        'filename' => $filename,
-        'file_size' => $file_size,
-        'file_size_human' => $file_size_human,
-        'duration' => $metadata['duration'] ?? '',
-        'duration_seconds' => $metadata['duration_seconds'] ?? '',
-        'video_bitrate' => $metadata['video_bitrate'] ?? '',
-        'codec_long_name' => $metadata['codec_long_name'] ?? '',
-        'codec_name' => $metadata['codec_name'] ?? '',
-        'width' => $metadata['width'] ?? '',
-        'height' => $metadata['height'] ?? '',
-        'aspect_ratio' => $metadata['display_aspect_ratio'] ?? '',
-        'pixel_aspect_ratio' => $metadata['sample_aspect_ratio'] ?? '',
-        'color_space' => $metadata['color_space'] ?? '',
-        'pixel_format' => $metadata['pix_fmt'] ?? '',
-        'frame_rate' => $metadata['r_frame_rate'] ?? '',
-        'scan_type' => $metadata['field_order'] ?? '',
-        'frames' => $metadata['nb_frames'] ?? '',
-        'timecode' => $metadata['timecode'] ?? '',
-        'creation_time' => $metadata['creation_time'] ?? '',
-        'md5' => $md5,
-        'sha1' => $sha1,
-        'raw_data' => $metadata['raw_json'] ?? ''
-    ];
-    
-    // Add more level data if available
-    if (in_array($config['info_level'], ['more', 'max', 'full'])) {
-        $data = array_merge($data, [
-            'audio_codec' => $metadata['audio_codec'] ?? '',
-            'audio_bitrate' => $metadata['audio_bitrate'] ?? '',
-            'audio_channels' => $metadata['audio_channels'] ?? '',
-            'audio_sample_rate' => $metadata['audio_sample_rate'] ?? '',
-            'audio_language' => $metadata['audio_language'] ?? '',
-            'audio_streams_count' => $metadata['audio_streams_count'] ?? 0,
-            'video_profile' => $metadata['video_profile'] ?? '',
-            'video_level' => $metadata['video_level'] ?? '',
-            'bit_depth' => $metadata['bit_depth'] ?? '',
-            'chroma_subsampling' => $metadata['chroma_subsampling'] ?? '',
-            'encoding_tool' => $metadata['encoding_tool'] ?? '',
-            'container_format' => $metadata['container_format'] ?? ''
-        ]);
-    }
-    
-    // Add max level data if available
-    if (in_array($config['info_level'], ['max', 'full'])) {
-        $data = array_merge($data, [
-            'gop_size' => $metadata['gop_size'] ?? '',
-            'b_frames' => $metadata['b_frames'] ?? '',
-            'total_bitrate' => $metadata['total_bitrate'] ?? '',
-            'compression_ratio' => $metadata['compression_ratio'] ?? '',
-            'quality_score' => $metadata['quality_score'] ?? '',
-            'subtitle_tracks' => $metadata['subtitle_tracks'] ?? 0,
-            'chapter_count' => $metadata['chapter_count'] ?? 0,
-            'file_permissions' => $metadata['file_permissions'] ?? '',
-            'last_modified' => $metadata['last_modified'] ?? '',
-            'interlace_detection' => $metadata['interlace_detection'] ?? '',
-            'motion_level' => $metadata['motion_level'] ?? ''
-        ]);
-    }
-    
-    // Add full level data if available
-    if ($config['info_level'] === 'full') {
-        $data = array_merge($data, [
-            'all_streams_count' => $metadata['all_streams_count'] ?? 0,
-            'video_streams_count' => $metadata['video_streams_count'] ?? 0,
-            'compliance_status' => $metadata['compliance_status'] ?? '',
-            'encoding_complexity' => $metadata['encoding_complexity'] ?? '',
-            'black_frames_start' => $metadata['black_frames_start'] ?? '',
-            'black_frames_end' => $metadata['black_frames_end'] ?? '',
-            'scene_changes' => $metadata['scene_changes'] ?? '',
-            'duplicate_frames' => $metadata['duplicate_frames'] ?? '',
-            'format_tags' => $metadata['format_tags'] ?? '',
-            'muxing_tool' => $metadata['muxing_tool'] ?? '',
-            'analysis_time' => $metadata['analysis_time'] ?? 0
-        ]);
-    }
-    
-    // Write to output file
-    return writeToOutputFile($data);
+
+    $record = [
+        'path'             => dirname($file_path),
+        'filename'         => basename($file_path),
+        'file_size'        => $file_size,
+        'file_size_human'  => formatBytes($file_size, 1),
+        'md5'              => $md5,
+        'sha1'             => $sha1,
+    ] + $metadata;
+
+    return writeToOutputFile($record);
 }
 
 function getVideoMetadata($file_path) {
     global $config;
-    
+
     $start_time = microtime(true);
-    
-    // Base FFprobe command - always needed
-    $cmd = escapeshellcmd($config['ffprobe_path']) . ' -v quiet -print_format json -show_format -show_streams ' . escapeshellarg($file_path) . ' 2>&1';
-    
+
+    $cmd = escapeshellarg($config['ffprobe_path'])
+        . ' -v quiet -print_format json -show_format -show_streams -show_chapters '
+        . escapeshellarg($file_path) . ' 2>/dev/null';
+
+    $output = [];
+    $return_code = 1;
     exec($cmd, $output, $return_code);
-    
+
     if ($return_code !== 0) {
-        output("FFprobe failed for: $file_path", 2);
+        output("\nffprobe fehlgeschlagen: $file_path", 2);
         return false;
     }
-    
+
     $json_string = implode('', $output);
+    unset($output);
+
     $json = json_decode($json_string, true);
-    
-    if ($json === null) {
-        output("Failed to parse JSON for: $file_path", 2);
+    if (!is_array($json)) {
+        output("\nffprobe-Ausgabe nicht lesbar: $file_path", 2);
         return false;
     }
-    
-    // Find video and audio streams
-    $video_stream = null;
-    $audio_streams = [];
+
+    $video_stream     = null;
+    $audio_streams    = [];
     $subtitle_streams = [];
-    
-    if (isset($json['streams'])) {
+
+    if (isset($json['streams']) && is_array($json['streams'])) {
         foreach ($json['streams'] as $stream) {
-            switch ($stream['codec_type']) {
+            switch ($stream['codec_type'] ?? '') {
                 case 'video':
-                    if ($video_stream === null) { // Take first video stream
+                    if ($video_stream === null) {
                         $video_stream = $stream;
                     }
                     break;
@@ -651,38 +767,28 @@ function getVideoMetadata($file_path) {
             }
         }
     }
-    
-    $metadata = [];
-    $metadata['analysis_time'] = 0; // Will be set at the end
-    
-    // ===== STANDARD LEVEL (always executed) =====
-    $metadata = array_merge($metadata, extractStandardMetadata($json, $video_stream));
-    
-    // ===== MORE LEVEL =====
-    if (in_array($config['info_level'], ['more', 'max', 'full'])) {
+
+    $metadata = extractStandardMetadata($json, $video_stream);
+
+    if (in_array($config['info_level'], ['more', 'max', 'full'], true)) {
         $metadata = array_merge($metadata, extractMoreMetadata($json, $video_stream, $audio_streams));
     }
-    
-    // ===== MAX LEVEL =====
-    if (in_array($config['info_level'], ['max', 'full'])) {
+    if (in_array($config['info_level'], ['max', 'full'], true)) {
         $metadata = array_merge($metadata, extractMaxMetadata($file_path, $json, $video_stream, $subtitle_streams));
     }
-    
-    // ===== FULL LEVEL =====
     if ($config['info_level'] === 'full') {
-        $metadata = array_merge($metadata, extractFullMetadata($file_path, $json, $video_stream, $audio_streams));
+        $metadata = array_merge($metadata, extractFullMetadata($json, $video_stream));
     }
-    
-    $metadata['raw_json'] = $json_string;
-    $metadata['analysis_time'] = round((microtime(true) - $start_time) * 1000, 2); // in milliseconds
-    
+
+    $metadata['analysis_time'] = round((microtime(true) - $start_time) * 1000, 2);
+    $metadata['raw_json'] = $config['raw_data'] ? $json_string : '';
+
     return $metadata;
 }
 
 function extractStandardMetadata($json, $video_stream) {
     $metadata = [];
-    
-    // Extract duration from format
+
     if (isset($json['format']['duration'])) {
         $duration_seconds = floatval($json['format']['duration']);
         $metadata['duration_seconds'] = $duration_seconds;
@@ -691,541 +797,482 @@ function extractStandardMetadata($json, $video_stream) {
         $metadata['duration_seconds'] = '';
         $metadata['duration'] = '';
     }
-    
-    // Extract video bitrate (estimate from total bitrate)
-    if (isset($json['format']['bit_rate'])) {
-        $total_bitrate = intval($json['format']['bit_rate']);
-        $metadata['video_bitrate'] = formatBitrate($total_bitrate * 0.8); // Assume 80% is video
+
+    if (isset($video_stream['bit_rate'])) {
+        $metadata['video_bitrate'] = formatBitrate(intval($video_stream['bit_rate']));
+    } elseif (isset($json['format']['bit_rate'])) {
+        // Schaetzung: der Ton belegt ueblicherweise rund ein Fuenftel.
+        $metadata['video_bitrate'] = formatBitrate(intval($json['format']['bit_rate']) * 0.8);
     } else {
         $metadata['video_bitrate'] = '';
     }
-    
-    // Extract video stream properties
+
     if ($video_stream) {
-        $metadata['codec_long_name'] = $video_stream['codec_long_name'] ?? '';
-        $metadata['codec_name'] = $video_stream['codec_name'] ?? '';
-        $metadata['width'] = $video_stream['width'] ?? '';
-        $metadata['height'] = $video_stream['height'] ?? '';
-        $metadata['display_aspect_ratio'] = $video_stream['display_aspect_ratio'] ?? '';
-        $metadata['sample_aspect_ratio'] = $video_stream['sample_aspect_ratio'] ?? '';
-        $metadata['color_space'] = $video_stream['color_space'] ?? '';
-        $metadata['pix_fmt'] = $video_stream['pix_fmt'] ?? '';
-        $metadata['r_frame_rate'] = $video_stream['r_frame_rate'] ?? '';
-        $metadata['field_order'] = $video_stream['field_order'] ?? '';
-        $metadata['nb_frames'] = $video_stream['nb_frames'] ?? '';
-        
-        // Extract timecode from tags
-        if (isset($video_stream['tags']['timecode'])) {
-            $metadata['timecode'] = $video_stream['tags']['timecode'];
-        } else {
-            $metadata['timecode'] = '';
-        }
+        $metadata['codec_long_name']     = $video_stream['codec_long_name'] ?? '';
+        $metadata['codec_name']          = $video_stream['codec_name'] ?? '';
+        $metadata['width']               = $video_stream['width'] ?? '';
+        $metadata['height']              = $video_stream['height'] ?? '';
+        $metadata['aspect_ratio']        = $video_stream['display_aspect_ratio'] ?? '';
+        $metadata['pixel_aspect_ratio']  = $video_stream['sample_aspect_ratio'] ?? '';
+        $metadata['color_space']         = $video_stream['color_space'] ?? '';
+        $metadata['pixel_format']        = $video_stream['pix_fmt'] ?? '';
+        $metadata['frame_rate']          = $video_stream['r_frame_rate'] ?? '';
+        $metadata['scan_type']           = $video_stream['field_order'] ?? '';
+        $metadata['frames']              = $video_stream['nb_frames'] ?? '';
+        $metadata['timecode']            = $video_stream['tags']['timecode'] ?? '';
     } else {
-        // No video stream found - fill with empty values
         $metadata = array_merge($metadata, [
             'codec_long_name' => '', 'codec_name' => '', 'width' => '', 'height' => '',
-            'display_aspect_ratio' => '', 'sample_aspect_ratio' => '', 'color_space' => '',
-            'pix_fmt' => '', 'r_frame_rate' => '', 'field_order' => '', 'nb_frames' => '',
-            'timecode' => ''
+            'aspect_ratio' => '', 'pixel_aspect_ratio' => '', 'color_space' => '',
+            'pixel_format' => '', 'frame_rate' => '', 'scan_type' => '', 'frames' => '',
+            'timecode' => '',
         ]);
     }
-    
-    // Extract creation time
-    if (isset($json['format']['tags']['creation_time'])) {
-        $metadata['creation_time'] = $json['format']['tags']['creation_time'];
-    } else {
-        $metadata['creation_time'] = '';
+
+    if ($metadata['timecode'] === '' && isset($json['format']['tags']['timecode'])) {
+        $metadata['timecode'] = $json['format']['tags']['timecode'];
     }
-    
+
+    $metadata['creation_time'] = $json['format']['tags']['creation_time'] ?? '';
+
     return $metadata;
 }
 
 function extractMoreMetadata($json, $video_stream, $audio_streams) {
     $metadata = [];
-    
-    // ===== AUDIO ANALYSIS =====
+
     if (!empty($audio_streams)) {
-        $primary_audio = $audio_streams[0]; // Use first audio stream for primary info
-        
-        $metadata['audio_codec'] = $primary_audio['codec_name'] ?? '';
-        $metadata['audio_bitrate'] = isset($primary_audio['bit_rate']) ? formatBitrate(intval($primary_audio['bit_rate'])) : '';
-        $metadata['audio_channels'] = $primary_audio['channels'] ?? '';
-        $metadata['audio_sample_rate'] = isset($primary_audio['sample_rate']) ? $primary_audio['sample_rate'] . ' Hz' : '';
-        $metadata['audio_language'] = $primary_audio['tags']['language'] ?? '';
+        $primary = $audio_streams[0];
+        $metadata['audio_codec']         = $primary['codec_name'] ?? '';
+        $metadata['audio_bitrate']       = isset($primary['bit_rate']) ? formatBitrate(intval($primary['bit_rate'])) : '';
+        $metadata['audio_channels']      = $primary['channels'] ?? '';
+        $metadata['audio_sample_rate']   = isset($primary['sample_rate']) ? $primary['sample_rate'] . ' Hz' : '';
+        $metadata['audio_language']      = $primary['tags']['language'] ?? '';
         $metadata['audio_streams_count'] = count($audio_streams);
     } else {
         $metadata = array_merge($metadata, [
             'audio_codec' => '', 'audio_bitrate' => '', 'audio_channels' => '',
-            'audio_sample_rate' => '', 'audio_language' => '', 'audio_streams_count' => 0
+            'audio_sample_rate' => '', 'audio_language' => '', 'audio_streams_count' => 0,
         ]);
     }
-    
-    // ===== EXTENDED VIDEO PROPERTIES =====
+
     if ($video_stream) {
         $metadata['video_profile'] = $video_stream['profile'] ?? '';
-        $metadata['video_level'] = $video_stream['level'] ?? '';
-        $metadata['bit_depth'] = $video_stream['bits_per_raw_sample'] ?? ($video_stream['bits_per_sample'] ?? '');
-        
-        // Chroma subsampling info
+        $metadata['video_level']   = $video_stream['level'] ?? '';
+        $metadata['bit_depth']     = $video_stream['bits_per_raw_sample'] ?? ($video_stream['bits_per_sample'] ?? '');
+
         if (isset($video_stream['chroma_location'])) {
             $metadata['chroma_subsampling'] = $video_stream['chroma_location'];
         } elseif (isset($video_stream['pix_fmt'])) {
-            // Guess from pixel format
             $pix_fmt = $video_stream['pix_fmt'];
-            if (strpos($pix_fmt, '420') !== false) $metadata['chroma_subsampling'] = '4:2:0';
-            elseif (strpos($pix_fmt, '422') !== false) $metadata['chroma_subsampling'] = '4:2:2';
-            elseif (strpos($pix_fmt, '444') !== false) $metadata['chroma_subsampling'] = '4:4:4';
-            else $metadata['chroma_subsampling'] = '';
+            if (strpos($pix_fmt, '420') !== false) {
+                $metadata['chroma_subsampling'] = '4:2:0';
+            } elseif (strpos($pix_fmt, '422') !== false) {
+                $metadata['chroma_subsampling'] = '4:2:2';
+            } elseif (strpos($pix_fmt, '444') !== false) {
+                $metadata['chroma_subsampling'] = '4:4:4';
+            } else {
+                $metadata['chroma_subsampling'] = '';
+            }
         } else {
             $metadata['chroma_subsampling'] = '';
         }
-        
-        // Encoding tool
-        if (isset($video_stream['tags']['encoder'])) {
-            $metadata['encoding_tool'] = $video_stream['tags']['encoder'];
-        } elseif (isset($json['format']['tags']['encoder'])) {
-            $metadata['encoding_tool'] = $json['format']['tags']['encoder'];
-        } else {
-            $metadata['encoding_tool'] = '';
-        }
+
+        $metadata['encoding_tool'] = $video_stream['tags']['encoder']
+            ?? ($json['format']['tags']['encoder'] ?? '');
     } else {
         $metadata = array_merge($metadata, [
             'video_profile' => '', 'video_level' => '', 'bit_depth' => '',
-            'chroma_subsampling' => '', 'encoding_tool' => ''
+            'chroma_subsampling' => '', 'encoding_tool' => '',
         ]);
     }
-    
-    // ===== CONTAINER FORMAT =====
+
     $metadata['container_format'] = $json['format']['format_long_name'] ?? '';
-    
+
     return $metadata;
 }
 
 function extractMaxMetadata($file_path, $json, $video_stream, $subtitle_streams) {
-    global $config;
     $metadata = [];
-    
-    // ===== ADVANCED VIDEO ANALYSIS =====
+
     if ($video_stream) {
-        // GOP and B-frame analysis
-        if (isset($video_stream['has_b_frames'])) {
-            $metadata['b_frames'] = $video_stream['has_b_frames'];
-        } else {
-            $metadata['b_frames'] = '';
-        }
-        
-        // GOP size estimation (if available)
-        $metadata['gop_size'] = ''; // Would need additional analysis
-        
-        // More accurate bitrate calculation
+        $metadata['b_frames'] = $video_stream['has_b_frames'] ?? '';
+        $metadata['gop_size'] = ''; // ffprobe liefert das nicht ohne Vollanalyse
+
         if (isset($video_stream['bit_rate'])) {
-            $video_bitrate = intval($video_stream['bit_rate']);
-        } elseif (isset($json['format']['bit_rate']) && isset($json['format']['duration'])) {
-            // Estimate video bitrate as 80% of total
-            $video_bitrate = intval($json['format']['bit_rate']) * 0.8;
+            $video_bitrate = floatval($video_stream['bit_rate']);
+        } elseif (isset($json['format']['bit_rate'])) {
+            $video_bitrate = floatval($json['format']['bit_rate']) * 0.8;
         } else {
-            $video_bitrate = 0;
+            $video_bitrate = 0.0;
         }
-        
-        if ($video_bitrate > 0) {
-            // Calculate compression ratio
-            $width = intval($video_stream['width'] ?? 0);
-            $height = intval($video_stream['height'] ?? 0);
-            $fps = calculateFrameRate($video_stream['r_frame_rate'] ?? '');
-            
-            if ($width > 0 && $height > 0 && $fps > 0) {
-                $uncompressed_bitrate = $width * $height * 24 * $fps; // 24-bit RGB
-                $compression_ratio = round($uncompressed_bitrate / $video_bitrate, 2);
-                $metadata['compression_ratio'] = $compression_ratio . ':1';
-                
-                // Quality score estimation (higher is better)
-                $pixels_per_second = $width * $height * $fps;
-                $bits_per_pixel = $video_bitrate / $pixels_per_second;
-                $quality_score = min(100, max(10, $bits_per_pixel * 20));
-                $metadata['quality_score'] = round($quality_score, 1);
-            } else {
-                $metadata['compression_ratio'] = '';
-                $metadata['quality_score'] = '';
-            }
+
+        $width  = intval($video_stream['width'] ?? 0);
+        $height = intval($video_stream['height'] ?? 0);
+        $fps    = calculateFrameRate($video_stream['r_frame_rate'] ?? '');
+
+        if ($video_bitrate > 0 && $width > 0 && $height > 0 && $fps > 0) {
+            $uncompressed = $width * $height * 24 * $fps;
+            $metadata['compression_ratio'] = round($uncompressed / $video_bitrate, 2) . ':1';
+
+            $bits_per_pixel = $video_bitrate / ($width * $height * $fps);
+            $metadata['quality_score'] = round(min(100, max(10, $bits_per_pixel * 20)), 1);
         } else {
             $metadata['compression_ratio'] = '';
             $metadata['quality_score'] = '';
         }
-        
-        // Interlace detection (more detailed)
+
         $field_order = $video_stream['field_order'] ?? '';
         if ($field_order === 'progressive') {
-            $metadata['interlace_detection'] = 'Progressive';
-        } elseif (in_array($field_order, ['tt', 'bb', 'tb', 'bt'])) {
-            $metadata['interlace_detection'] = 'Interlaced (' . $field_order . ')';
+            $metadata['interlace_detection'] = 'Progressiv';
+        } elseif (in_array($field_order, ['tt', 'bb', 'tb', 'bt'], true)) {
+            $metadata['interlace_detection'] = 'Zeilensprung (' . $field_order . ')';
         } else {
-            $metadata['interlace_detection'] = 'Unknown';
+            $metadata['interlace_detection'] = 'unbekannt';
         }
-        
-        // Motion level estimation (based on B-frames)
+
         $has_b_frames = intval($video_stream['has_b_frames'] ?? 0);
         if ($has_b_frames > 2) {
-            $metadata['motion_level'] = 'High';
+            $metadata['motion_level'] = 'hoch';
         } elseif ($has_b_frames > 0) {
-            $metadata['motion_level'] = 'Medium';
+            $metadata['motion_level'] = 'mittel';
         } else {
-            $metadata['motion_level'] = 'Low';
+            $metadata['motion_level'] = 'gering';
         }
     } else {
         $metadata = array_merge($metadata, [
             'gop_size' => '', 'b_frames' => '', 'compression_ratio' => '',
-            'quality_score' => '', 'interlace_detection' => '', 'motion_level' => ''
+            'quality_score' => '', 'interlace_detection' => '', 'motion_level' => '',
         ]);
     }
-    
-    // ===== TOTAL BITRATE =====
-    if (isset($json['format']['bit_rate'])) {
-        $metadata['total_bitrate'] = formatBitrate(intval($json['format']['bit_rate']));
-    } else {
-        $metadata['total_bitrate'] = '';
-    }
-    
-    // ===== SUBTITLE AND CHAPTER INFO =====
+
+    $metadata['total_bitrate'] = isset($json['format']['bit_rate'])
+        ? formatBitrate(intval($json['format']['bit_rate']))
+        : '';
+
     $metadata['subtitle_tracks'] = count($subtitle_streams);
-    
-    // Chapter count (if available)
-    if (isset($json['chapters'])) {
-        $metadata['chapter_count'] = count($json['chapters']);
-    } else {
-        $metadata['chapter_count'] = 0;
-    }
-    
-    // ===== FILE SYSTEM PROPERTIES =====
+    $metadata['chapter_count']   = isset($json['chapters']) ? count($json['chapters']) : 0;
+
     if (file_exists($file_path)) {
-        $stat = stat($file_path);
         $metadata['file_permissions'] = substr(sprintf('%o', fileperms($file_path)), -4);
-        $metadata['last_modified'] = date('Y-m-d H:i:s', $stat['mtime']);
+        $metadata['last_modified']    = date('Y-m-d H:i:s', filemtime($file_path));
     } else {
         $metadata['file_permissions'] = '';
-        $metadata['last_modified'] = '';
+        $metadata['last_modified']    = '';
     }
-    
+
     return $metadata;
 }
 
-function extractFullMetadata($file_path, $json, $video_stream, $audio_streams) {
-    global $config;
+function extractFullMetadata($json, $video_stream) {
     $metadata = [];
-    
-    // ===== ALL STREAMS ANALYSIS =====
+
     $all_streams = $json['streams'] ?? [];
     $metadata['all_streams_count'] = count($all_streams);
-    
+
     $video_streams_count = 0;
     foreach ($all_streams as $stream) {
-        if ($stream['codec_type'] === 'video') {
+        if (($stream['codec_type'] ?? '') === 'video') {
             $video_streams_count++;
         }
     }
     $metadata['video_streams_count'] = $video_streams_count;
-    
-    // ===== ADVANCED DIAGNOSTICS =====
-    // Format compliance check
+
     $format_name = $json['format']['format_name'] ?? '';
     if (strpos($format_name, 'mp4') !== false) {
-        $metadata['compliance_status'] = 'MP4 Standard';
+        $metadata['compliance_status'] = 'MP4';
     } elseif (strpos($format_name, 'matroska') !== false) {
-        $metadata['compliance_status'] = 'Matroska Standard';
+        $metadata['compliance_status'] = 'Matroska';
+    } elseif (strpos($format_name, 'mxf') !== false) {
+        $metadata['compliance_status'] = 'MXF';
+    } elseif ($format_name !== '') {
+        $metadata['compliance_status'] = $format_name;
     } else {
-        $metadata['compliance_status'] = 'Other Format';
+        $metadata['compliance_status'] = '';
     }
-    
-    // Encoding complexity estimation
+
     if ($video_stream) {
         $profile = strtolower($video_stream['profile'] ?? '');
         if (strpos($profile, 'high') !== false) {
-            $complexity = 'High';
+            $metadata['encoding_complexity'] = 'hoch';
         } elseif (strpos($profile, 'main') !== false) {
-            $complexity = 'Medium';
+            $metadata['encoding_complexity'] = 'mittel';
         } else {
-            $complexity = 'Low';
+            $metadata['encoding_complexity'] = 'gering';
         }
-        $metadata['encoding_complexity'] = $complexity;
     } else {
         $metadata['encoding_complexity'] = '';
     }
-    
-    // ===== CONTENT ANALYSIS (Performance-intensive) =====
-    // This would require additional FFmpeg analysis commands
-    // For now, we'll use placeholders with estimated values
-    
-    $metadata['black_frames_start'] = ''; // Would need: ffmpeg -i file -vf blackdetect
-    $metadata['black_frames_end'] = '';
-    $metadata['scene_changes'] = ''; // Would need: ffmpeg -i file -vf select='gt(scene,0.3)'
-    $metadata['duplicate_frames'] = ''; // Would need: ffmpeg -i file -vf mpdecimate
-    
-    // ===== FORMAT TAGS =====
+
+    // Die folgenden vier Werte brauchen eine vollstaendige Dekodierung des
+    // Materials (ffmpeg mit blackdetect, select, mpdecimate). Das dauert pro
+    // Datei ein Vielfaches der Laufzeit und ist bewusst nicht umgesetzt.
+    $metadata['black_frames_start'] = '';
+    $metadata['black_frames_end']   = '';
+    $metadata['scene_changes']      = '';
+    $metadata['duplicate_frames']   = '';
+
     $format_tags = [];
-    if (isset($json['format']['tags'])) {
+    if (isset($json['format']['tags']) && is_array($json['format']['tags'])) {
         foreach ($json['format']['tags'] as $key => $value) {
-            if (!in_array($key, ['creation_time', 'encoder'])) {
+            if (!in_array($key, ['creation_time', 'encoder'], true) && is_scalar($value)) {
                 $format_tags[] = "$key=$value";
             }
         }
     }
     $metadata['format_tags'] = implode('; ', $format_tags);
-    
-    // ===== MUXING TOOL =====
-    if (isset($json['format']['tags']['ENCODER'])) {
-        $metadata['muxing_tool'] = $json['format']['tags']['ENCODER'];
-    } elseif (isset($json['format']['tags']['encoder'])) {
-        $metadata['muxing_tool'] = $json['format']['tags']['encoder'];
-    } elseif (isset($json['format']['tags']['muxingapp'])) {
-        $metadata['muxing_tool'] = $json['format']['tags']['muxingapp'];
-    } else {
-        $metadata['muxing_tool'] = '';
-    }
-    
-    $metadata['raw_analysis_time'] = ''; // Will be set by caller
-    
+
+    $metadata['muxing_tool'] = $json['format']['tags']['ENCODER']
+        ?? ($json['format']['tags']['encoder']
+        ?? ($json['format']['tags']['muxingapp'] ?? ''));
+
     return $metadata;
 }
 
 function calculateFrameRate($frame_rate_string) {
-    if (empty($frame_rate_string)) return 0;
-    
+    if ($frame_rate_string === '' || $frame_rate_string === null) {
+        return 0.0;
+    }
+
     if (strpos($frame_rate_string, '/') !== false) {
         $parts = explode('/', $frame_rate_string);
-        if (count($parts) === 2 && $parts[1] != 0) {
+        if (count($parts) === 2 && floatval($parts[1]) != 0.0) {
             return floatval($parts[0]) / floatval($parts[1]);
         }
+        return 0.0;
     }
-    
+
     return floatval($frame_rate_string);
 }
 
-function writeToOutputFile($data) {
-    global $config, $output_file;
-    
+// ================ SPALTEN UND AUSGABE ================
+/**
+ * Einzige Stelle, an der die Spalten definiert sind. Kopfzeile, CSV-Zeile,
+ * JSON-Objekt und XML-Element leiten sich daraus ab, damit Kopf und Inhalt
+ * nicht auseinanderlaufen koennen.
+ *
+ * Aufbau je Eintrag: [Beschriftung, Schluessel, Typ]
+ * Typ: 'text', 'int' oder 'float'
+ */
+function getColumns() {
+    global $config;
+
+    $columns = [
+        ['Pfad', 'path', 'text'],
+        ['Datei', 'filename', 'text'],
+        ['Dateigroesse', 'file_size', 'int'],
+        ['Dateigroesse_human', 'file_size_human', 'text'],
+        ['Duration', 'duration', 'text'],
+        ['Duration_sec', 'duration_seconds', 'float'],
+        ['Video_Bitrate', 'video_bitrate', 'text'],
+        ['Video_Codec_lang', 'codec_long_name', 'text'],
+        ['Video_Codec', 'codec_name', 'text'],
+        ['Breite', 'width', 'int'],
+        ['Höhe', 'height', 'int'],
+        ['Seitenverhältnis', 'aspect_ratio', 'text'],
+        ['Pixelverhältnis', 'pixel_aspect_ratio', 'text'],
+        ['Farbraum', 'color_space', 'text'],
+        ['Pixelformat', 'pixel_format', 'text'],
+        ['Framerate', 'frame_rate', 'text'],
+        ['Scantype', 'scan_type', 'text'],
+        ['Frames', 'frames', 'int'],
+        ['Timecode', 'timecode', 'text'],
+        ['Erstelldatum', 'creation_time', 'text'],
+    ];
+
+    if (in_array($config['info_level'], ['more', 'max', 'full'], true)) {
+        $columns = array_merge($columns, [
+            ['Audio_Codec', 'audio_codec', 'text'],
+            ['Audio_Bitrate', 'audio_bitrate', 'text'],
+            ['Audio_Channels', 'audio_channels', 'int'],
+            ['Audio_Samplerate', 'audio_sample_rate', 'text'],
+            ['Audio_Language', 'audio_language', 'text'],
+            ['Audio_Streams_Count', 'audio_streams_count', 'int'],
+            ['Video_Profile', 'video_profile', 'text'],
+            ['Video_Level', 'video_level', 'text'],
+            ['Bit_Depth', 'bit_depth', 'text'],
+            ['Chroma_Subsampling', 'chroma_subsampling', 'text'],
+            ['Encoding_Tool', 'encoding_tool', 'text'],
+            ['Container_Format', 'container_format', 'text'],
+        ]);
+    }
+
+    if (in_array($config['info_level'], ['max', 'full'], true)) {
+        $columns = array_merge($columns, [
+            ['GOP_Size', 'gop_size', 'text'],
+            ['B_Frames', 'b_frames', 'text'],
+            ['Total_Bitrate', 'total_bitrate', 'text'],
+            ['Compression_Ratio', 'compression_ratio', 'text'],
+            ['Quality_Score', 'quality_score', 'float'],
+            ['Subtitle_Tracks', 'subtitle_tracks', 'int'],
+            ['Chapter_Count', 'chapter_count', 'int'],
+            ['File_Permissions', 'file_permissions', 'text'],
+            ['Last_Modified', 'last_modified', 'text'],
+            ['Interlace_Detection', 'interlace_detection', 'text'],
+            ['Motion_Level', 'motion_level', 'text'],
+        ]);
+    }
+
+    if ($config['info_level'] === 'full') {
+        $columns = array_merge($columns, [
+            ['All_Streams_Count', 'all_streams_count', 'int'],
+            ['Video_Streams_Count', 'video_streams_count', 'int'],
+            ['Compliance_Status', 'compliance_status', 'text'],
+            ['Encoding_Complexity', 'encoding_complexity', 'text'],
+            ['Black_Frames_Start', 'black_frames_start', 'text'],
+            ['Black_Frames_End', 'black_frames_end', 'text'],
+            ['Scene_Changes', 'scene_changes', 'text'],
+            ['Duplicate_Frames', 'duplicate_frames', 'text'],
+            ['Format_Tags', 'format_tags', 'text'],
+            ['Muxing_Tool', 'muxing_tool', 'text'],
+            ['Raw_Analysis_Time', 'analysis_time', 'float'],
+        ]);
+    }
+
+    $columns[] = ['md5', 'md5', 'text'];
+    $columns[] = ['SHA', 'sha1', 'text'];
+
+    if ($config['raw_data']) {
+        $columns[] = ['data', 'raw_json', 'text'];
+    }
+
+    return $columns;
+}
+
+function initializeOutputFile() {
+    global $config, $output_file, $entries_written;
+
+    // Bei der Wiederaufnahme steht schon etwas in der Datei.
+    if ($entries_written > 0 && file_exists($output_file)) {
+        return;
+    }
+
     switch ($config['output_format']) {
         case 'csv':
-            return writeCSVLine($data);
+            $labels = [];
+            foreach (getColumns() as $column) {
+                $labels[] = csvField($column[0]);
+            }
+            // BOM, damit Excel und Numbers die Umlaute in der Kopfzeile richtig
+            // anzeigen.
+            file_put_contents($output_file, "\xEF\xBB\xBF" . implode(';', $labels) . "\n");
+            break;
+
         case 'json':
-            return writeJSONEntry($data);
+            file_put_contents($output_file, "[\n");
+            break;
+
         case 'xml':
-            return writeXMLEntry($data);
+            file_put_contents($output_file, '<?xml version="1.0" encoding="UTF-8"?>' . "\n<video_files>\n");
+            break;
     }
-    
+}
+
+function writeToOutputFile($record) {
+    global $config;
+
+    switch ($config['output_format']) {
+        case 'csv':
+            return writeCSVLine($record);
+        case 'json':
+            return writeJSONEntry($record);
+        case 'xml':
+            return writeXMLEntry($record);
+    }
+
     return false;
 }
 
-function writeCSVLine($data) {
-    global $output_file, $config;
-    
-    $line_parts = [];
-    
-    // Standard columns (always included)
-    $line_parts[] = '"' . addslashes($data['path']) . '"';
-    $line_parts[] = '"' . addslashes($data['filename']) . '"';
-    $line_parts[] = $data['file_size'];
-    $line_parts[] = '"' . $data['file_size_human'] . '"';
-    $line_parts[] = '"' . ($data['duration'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['duration_seconds'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['video_bitrate'] ?? '') . '"';
-    $line_parts[] = '"' . addslashes($data['codec_long_name'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['codec_name'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['width'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['height'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['aspect_ratio'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['pixel_aspect_ratio'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['color_space'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['pixel_format'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['frame_rate'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['scan_type'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['frames'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['timecode'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['creation_time'] ?? '') . '"';
-    
-    // More level columns
-    if (in_array($config['info_level'], ['more', 'max', 'full'])) {
-        $line_parts[] = '"' . ($data['audio_codec'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['audio_bitrate'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['audio_channels'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['audio_sample_rate'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['audio_language'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['audio_streams_count'] ?? '0') . '"';
-        $line_parts[] = '"' . ($data['video_profile'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['video_level'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['bit_depth'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['chroma_subsampling'] ?? '') . '"';
-        $line_parts[] = '"' . addslashes($data['encoding_tool'] ?? '') . '"';
-        $line_parts[] = '"' . addslashes($data['container_format'] ?? '') . '"';
-    }
-    
-    // Max level columns
-    if (in_array($config['info_level'], ['max', 'full'])) {
-        $line_parts[] = '"' . ($data['gop_size'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['b_frames'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['total_bitrate'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['compression_ratio'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['quality_score'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['subtitle_tracks'] ?? '0') . '"';
-        $line_parts[] = '"' . ($data['chapter_count'] ?? '0') . '"';
-        $line_parts[] = '"' . ($data['file_permissions'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['last_modified'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['interlace_detection'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['motion_level'] ?? '') . '"';
-    }
-    
-    // Full level columns
-    if ($config['info_level'] === 'full') {
-        $line_parts[] = '"' . ($data['all_streams_count'] ?? '0') . '"';
-        $line_parts[] = '"' . ($data['video_streams_count'] ?? '0') . '"';
-        $line_parts[] = '"' . ($data['compliance_status'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['encoding_complexity'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['black_frames_start'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['black_frames_end'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['scene_changes'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['duplicate_frames'] ?? '') . '"';
-        $line_parts[] = '"' . addslashes($data['format_tags'] ?? '') . '"';
-        $line_parts[] = '"' . addslashes($data['muxing_tool'] ?? '') . '"';
-        $line_parts[] = '"' . ($data['analysis_time'] ?? '') . '"';
-    }
-    
-    // Always add checksum and raw data at the end
-    $line_parts[] = '"' . ($data['md5'] ?? '') . '"';
-    $line_parts[] = '"' . ($data['sha1'] ?? '') . '"';
-    $line_parts[] = '"' . addslashes($data['raw_data'] ?? '') . '"';
-    
-    $line = implode(';', $line_parts) . "\n";
-    
-    return file_put_contents($output_file, $line, FILE_APPEND) !== false;
+function csvField($value) {
+    $value = (string)$value;
+    // Ein Zeilenumbruch innerhalb einer Zelle ist erlaubt, macht die Datei aber
+    // fuer viele Werkzeuge unbrauchbar. Deshalb ersetzen.
+    $value = str_replace(["\r\n", "\r", "\n"], ' ', $value);
+
+    // CSV maskiert Anfuehrungszeichen durch Verdoppeln, nicht durch
+    // Backslashes. Bis 3.0.2 stand hier addslashes, was jede Datei mit einem
+    // Anfuehrungszeichen im Pfad und jede Zeile mit +raw zerlegt hat.
+    return '"' . str_replace('"', '""', $value) . '"';
 }
 
-function writeJSONEntry($data) {
-    global $output_file, $stats, $config;
-    
-    $json_data = [
-        'path' => $data['path'],
-        'filename' => $data['filename'],
-        'file_size' => intval($data['file_size']),
-        'file_size_human' => $data['file_size_human'],
-        'duration' => $data['duration'] ?? '',
-        'duration_seconds' => floatval($data['duration_seconds'] ?? 0),
-        'video_bitrate' => $data['video_bitrate'] ?? '',
-        'codec_long_name' => $data['codec_long_name'] ?? '',
-        'codec_name' => $data['codec_name'] ?? '',
-        'width' => intval($data['width'] ?? 0),
-        'height' => intval($data['height'] ?? 0),
-        'aspect_ratio' => $data['aspect_ratio'] ?? '',
-        'pixel_aspect_ratio' => $data['pixel_aspect_ratio'] ?? '',
-        'color_space' => $data['color_space'] ?? '',
-        'pixel_format' => $data['pixel_format'] ?? '',
-        'frame_rate' => $data['frame_rate'] ?? '',
-        'scan_type' => $data['scan_type'] ?? '',
-        'frames' => intval($data['frames'] ?? 0),
-        'timecode' => $data['timecode'] ?? '',
-        'creation_time' => $data['creation_time'] ?? '',
-        'md5' => $data['md5'] ?? '',
-        'sha1' => $data['sha1'] ?? ''
-    ];
-    
-    // Add more level data
-    if (in_array($config['info_level'], ['more', 'max', 'full'])) {
-        $json_data = array_merge($json_data, [
-            'audio_codec' => $data['audio_codec'] ?? '',
-            'audio_bitrate' => $data['audio_bitrate'] ?? '',
-            'audio_channels' => intval($data['audio_channels'] ?? 0),
-            'audio_sample_rate' => $data['audio_sample_rate'] ?? '',
-            'audio_language' => $data['audio_language'] ?? '',
-            'audio_streams_count' => intval($data['audio_streams_count'] ?? 0),
-            'video_profile' => $data['video_profile'] ?? '',
-            'video_level' => $data['video_level'] ?? '',
-            'bit_depth' => $data['bit_depth'] ?? '',
-            'chroma_subsampling' => $data['chroma_subsampling'] ?? '',
-            'encoding_tool' => $data['encoding_tool'] ?? '',
-            'container_format' => $data['container_format'] ?? ''
-        ]);
-    }
-    
-    // Add max level data
-    if (in_array($config['info_level'], ['max', 'full'])) {
-        $json_data = array_merge($json_data, [
-            'gop_size' => $data['gop_size'] ?? '',
-            'b_frames' => $data['b_frames'] ?? '',
-            'total_bitrate' => $data['total_bitrate'] ?? '',
-            'compression_ratio' => $data['compression_ratio'] ?? '',
-            'quality_score' => floatval($data['quality_score'] ?? 0),
-            'subtitle_tracks' => intval($data['subtitle_tracks'] ?? 0),
-            'chapter_count' => intval($data['chapter_count'] ?? 0),
-            'file_permissions' => $data['file_permissions'] ?? '',
-            'last_modified' => $data['last_modified'] ?? '',
-            'interlace_detection' => $data['interlace_detection'] ?? '',
-            'motion_level' => $data['motion_level'] ?? ''
-        ]);
-    }
-    
-    // Add full level data
-    if ($config['info_level'] === 'full') {
-        $json_data = array_merge($json_data, [
-            'all_streams_count' => intval($data['all_streams_count'] ?? 0),
-            'video_streams_count' => intval($data['video_streams_count'] ?? 0),
-            'compliance_status' => $data['compliance_status'] ?? '',
-            'encoding_complexity' => $data['encoding_complexity'] ?? '',
-            'black_frames_start' => $data['black_frames_start'] ?? '',
-            'black_frames_end' => $data['black_frames_end'] ?? '',
-            'scene_changes' => $data['scene_changes'] ?? '',
-            'duplicate_frames' => $data['duplicate_frames'] ?? '',
-            'format_tags' => $data['format_tags'] ?? '',
-            'muxing_tool' => $data['muxing_tool'] ?? '',
-            'analysis_time' => floatval($data['analysis_time'] ?? 0)
-        ]);
-    }
-    
-    $json_string = json_encode($json_data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-    
-    // Add comma if not first entry
-    if ($stats['files_processed'] > 0) {
-        $json_string = ",\n" . $json_string;
-    } else {
-        $json_string = $json_string;
-    }
-    
-    return file_put_contents($output_file, $json_string, FILE_APPEND) !== false;
-}
-
-function writeXMLEntry($data) {
+function writeCSVLine($record) {
     global $output_file;
-    
+
+    $parts = [];
+    foreach (getColumns() as $column) {
+        list($label, $key, $type) = $column;
+        $value = $record[$key] ?? '';
+
+        if ($type === 'int' && $value !== '' && is_numeric($value)) {
+            $parts[] = (string)intval($value);
+        } else {
+            $parts[] = csvField($value);
+        }
+    }
+
+    return file_put_contents($output_file, implode(';', $parts) . "\n", FILE_APPEND) !== false;
+}
+
+function writeJSONEntry($record) {
+    global $output_file, $entries_written;
+
+    $data = [];
+    foreach (getColumns() as $column) {
+        list($label, $key, $type) = $column;
+        $value = $record[$key] ?? '';
+
+        if ($type === 'int') {
+            $data[$key] = ($value === '') ? 0 : intval($value);
+        } elseif ($type === 'float') {
+            $data[$key] = ($value === '') ? 0.0 : floatval($value);
+        } else {
+            $data[$key] = (string)$value;
+        }
+    }
+
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($entries_written > 0) {
+        $json = ",\n" . $json;
+    }
+
+    $ok = file_put_contents($output_file, $json, FILE_APPEND) !== false;
+    if ($ok) {
+        $entries_written++;
+    }
+
+    return $ok;
+}
+
+function writeXMLEntry($record) {
+    global $output_file, $entries_written;
+
     $xml = "  <video>\n";
-    $xml .= "    <path>" . htmlspecialchars($data['path']) . "</path>\n";
-    $xml .= "    <filename>" . htmlspecialchars($data['filename']) . "</filename>\n";
-    $xml .= "    <file_size>" . $data['file_size'] . "</file_size>\n";
-    $xml .= "    <file_size_human>" . htmlspecialchars($data['file_size_human']) . "</file_size_human>\n";
-    $xml .= "    <duration>" . htmlspecialchars($data['duration'] ?? '') . "</duration>\n";
-    $xml .= "    <duration_seconds>" . ($data['duration_seconds'] ?? '') . "</duration_seconds>\n";
-    $xml .= "    <video_bitrate>" . htmlspecialchars($data['video_bitrate'] ?? '') . "</video_bitrate>\n";
-    $xml .= "    <codec_long_name>" . htmlspecialchars($data['codec_long_name'] ?? '') . "</codec_long_name>\n";
-    $xml .= "    <codec_name>" . htmlspecialchars($data['codec_name'] ?? '') . "</codec_name>\n";
-    $xml .= "    <width>" . ($data['width'] ?? '') . "</width>\n";
-    $xml .= "    <height>" . ($data['height'] ?? '') . "</height>\n";
-    $xml .= "    <aspect_ratio>" . htmlspecialchars($data['aspect_ratio'] ?? '') . "</aspect_ratio>\n";
-    $xml .= "    <pixel_aspect_ratio>" . htmlspecialchars($data['pixel_aspect_ratio'] ?? '') . "</pixel_aspect_ratio>\n";
-    $xml .= "    <color_space>" . htmlspecialchars($data['color_space'] ?? '') . "</color_space>\n";
-    $xml .= "    <pixel_format>" . htmlspecialchars($data['pixel_format'] ?? '') . "</pixel_format>\n";
-    $xml .= "    <frame_rate>" . htmlspecialchars($data['frame_rate'] ?? '') . "</frame_rate>\n";
-    $xml .= "    <scan_type>" . htmlspecialchars($data['scan_type'] ?? '') . "</scan_type>\n";
-    $xml .= "    <frames>" . ($data['frames'] ?? '') . "</frames>\n";
-    $xml .= "    <timecode>" . htmlspecialchars($data['timecode'] ?? '') . "</timecode>\n";
-    $xml .= "    <creation_time>" . htmlspecialchars($data['creation_time'] ?? '') . "</creation_time>\n";
-    $xml .= "    <md5>" . ($data['md5'] ?? '') . "</md5>\n";
-    $xml .= "    <sha1>" . ($data['sha1'] ?? '') . "</sha1>\n";
+    foreach (getColumns() as $column) {
+        list($label, $key, $type) = $column;
+        $value = (string)($record[$key] ?? '');
+        // Steuerzeichen sind in XML 1.0 nicht erlaubt und machen die Datei
+        // unlesbar, egal wie sie maskiert werden.
+        $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u', '', $value);
+        $xml .= '    <' . $key . '>'
+            . htmlspecialchars((string)$value, ENT_XML1 | ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
+            . '</' . $key . ">\n";
+    }
     $xml .= "  </video>\n";
-    
-    return file_put_contents($output_file, $xml, FILE_APPEND) !== false;
+
+    $ok = file_put_contents($output_file, $xml, FILE_APPEND) !== false;
+    if ($ok) {
+        $entries_written++;
+    }
+
+    return $ok;
 }
 
 function finalizeOutputFile() {
     global $config, $output_file;
-    
+
     switch ($config['output_format']) {
         case 'json':
-            file_put_contents($output_file, "\n]", FILE_APPEND);
+            file_put_contents($output_file, "\n]\n", FILE_APPEND);
             break;
         case 'xml':
             file_put_contents($output_file, "</video_files>\n", FILE_APPEND);
@@ -1233,101 +1280,82 @@ function finalizeOutputFile() {
     }
 }
 
+// ================ ANZEIGE ================
 function updateProgress($current, $total, $filename) {
     global $config;
-    
-    if ($config['verbose_level'] == 0) return; // Quiet mode
-    
-    $percent = round(($current / $total) * 100, 1);
-    $bar_length = 30;
-    $filled_length = intval($bar_length * ($current / $total));
-    $bar = str_repeat('=', $filled_length) . str_repeat('-', $bar_length - $filled_length);
-    
-    $progress_text = sprintf("\r[%s] %s%% (%d/%d) %s", 
-        $bar, 
-        $percent, 
-        $current, 
-        $total, 
-        mb_substr($filename, 0, 40)
-    );
-    
-    echo $progress_text;
+
+    if ($config['verbose_level'] === 0 || $total <= 0) {
+        return;
+    }
+
+    $percent      = round(($current / $total) * 100, 1);
+    $bar_length   = 30;
+    $filled       = min($bar_length, intval($bar_length * ($current / $total)));
+    $bar          = str_repeat('=', $filled) . str_repeat('-', $bar_length - $filled);
+
+    printf("\r[%s] %5.1f%% (%d/%d) %-42s", $bar, $percent, $current, $total,
+        mb_substr($filename, 0, 42));
 }
 
 function showStatistics() {
-    global $stats, $config;
-    
-    $duration = time() - $stats['start_time'];
-    
-    output("\n=== Processing Statistics ===", 1);
-    output("Info level: " . $config['info_level'] . " (performance-based analysis)", 1);
-    output("Total files found: " . number_format($stats['total_files_found']), 1);
-    output("Video files found: " . number_format($stats['video_files_found']), 1);
-    output("Files processed: " . number_format($stats['files_processed']), 1);
-    output("Files skipped: " . number_format($stats['files_skipped']), 1);
-    output("Errors encountered: " . number_format($stats['errors']), 1);
-    output("Total data size: " . formatBytes($stats['total_size']), 1);
-    output("Processing time: " . formatDuration($duration), 1);
-    
+    global $stats, $config, $output_file;
+
+    $duration = max(0, time() - $stats['start_time']);
+
+    output("", 1);
+    output("=== Zusammenfassung ===", 1);
+    output("Detailgrad: " . $config['info_level'], 1);
+    output("Dateien insgesamt: " . number_format($stats['total_files_found'], 0, ',', '.'), 1);
+    output("Videodateien: " . number_format($stats['video_files_found'], 0, ',', '.'), 1);
+    output("Verarbeitet: " . number_format($stats['files_processed'], 0, ',', '.'), 1);
+    output("Uebersprungen: " . number_format($stats['files_skipped'], 0, ',', '.'), 1);
+    output("Fehler: " . number_format($stats['errors'], 0, ',', '.'), 1);
+    output("Datenmenge: " . formatBytes($stats['total_size']), 1);
+    output("Laufzeit: " . formatDuration($duration), 1);
+
     if ($stats['files_processed'] > 0 && $duration > 0) {
-        $rate = $stats['files_processed'] / $duration;
-        $avg_time_per_file = $duration / $stats['files_processed'];
-        output("Processing rate: " . number_format($rate, 2) . " files/second", 1);
-        output("Average time per file: " . number_format($avg_time_per_file, 2) . " seconds", 1);
-        
-        // Show performance expectations based on info level
-        $expected_times = [
-            'standard' => 0.1,
-            'more' => 0.2,
-            'max' => 0.5,
-            'full' => 1.5
-        ];
-        
-        $expected = $expected_times[$config['info_level']] ?? 0.1;
-        $performance_ratio = $avg_time_per_file / $expected;
-        
-        if ($performance_ratio > 1.5) {
-            $performance_status = "slower than expected";
-        } elseif ($performance_ratio < 0.5) {
-            $performance_status = "faster than expected";  
-        } else {
-            $performance_status = "as expected";
-        }
-        
-        output("Performance: " . number_format($performance_ratio, 2) . "x " . $performance_status . 
-               " (expected ~" . $expected . "s per file for " . $config['info_level'] . " level)", 1);
+        $avg = $duration / $stats['files_processed'];
+        output("Tempo: " . number_format($stats['files_processed'] / $duration, 2, ',', '.')
+            . " Dateien/Sekunde", 1);
+        output("Durchschnitt je Datei: " . number_format($avg, 2, ',', '.') . " Sekunden", 1);
     }
-    
-    // Show data throughput
-    if ($stats['total_size'] > 0 && $duration > 0) {
-        $throughput = $stats['total_size'] / $duration;
-        output("Data throughput: " . formatBytes($throughput) . "/second", 1);
+
+    output("Spitzenspeicher: " . formatBytes(memory_get_peak_usage(true)), 1);
+
+    if (!$config['dry_run']) {
+        output("Ausgabedatei: " . $output_file, 1);
     }
-    
-    output("Finished at: " . date("Y-m-d H:i:s"), 1);
+    output("Fertig: " . date('Y-m-d H:i:s'), 1);
 }
 
 function cleanup() {
-    global $progress_file, $config;
-    
-    // Remove progress file if processing completed successfully
-    if (!$config['dry_run'] && file_exists($progress_file)) {
-        unlink($progress_file);
+    global $progress_file, $progress_handle, $config, $stats;
+
+    if ($progress_handle !== null) {
+        fclose($progress_handle);
+        $progress_handle = null;
+    }
+
+    // Die Fortschrittsdatei bleibt liegen, wenn Fehler aufgetreten sind. Dann
+    // kann der Lauf mit +resume gezielt wiederholt werden.
+    if (!$config['dry_run'] && $stats['errors'] === 0 && file_exists($progress_file)) {
+        @unlink($progress_file);
+    } elseif (!$config['dry_run'] && $stats['errors'] > 0) {
+        output("Fortschrittsdatei bleibt erhalten, Wiederaufnahme mit +resume moeglich.", 1);
     }
 }
 
-// ================ UTILITY FUNCTIONS ================
-
+// ================ HILFSFUNKTIONEN ================
 function output($message, $min_verbose_level = 1) {
     global $config;
-    
+
     if ($config['verbose_level'] >= $min_verbose_level) {
         echo $message . "\n";
     }
 }
 
 function error($message, $fatal = false) {
-    fprintf(STDERR, "\033[31m[ERROR]\033[0m %s\n", $message);
+    fprintf(STDERR, "\n\033[31m[FEHLER]\033[0m %s\n", $message);
     if ($fatal) {
         exit(1);
     }
@@ -1335,42 +1363,47 @@ function error($message, $fatal = false) {
 
 function formatBytes($bytes, $precision = 2) {
     $units = ['Byte', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    $bytes = max($bytes, 0);
-    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-    $pow = min($pow, count($units) - 1);
-    $bytes /= (1 << (10 * $pow));
-    return number_format($bytes, $precision, ',', '.') . $units[$pow];
+    $bytes = max((float)$bytes, 0);
+    $pow   = ($bytes > 0) ? floor(log($bytes) / log(1024)) : 0;
+    $pow   = (int)min($pow, count($units) - 1);
+    $bytes /= pow(1024, $pow);
+
+    return number_format($bytes, $precision, ',', '.') . ' ' . $units[$pow];
 }
 
 function formatBitrate($bitrate) {
+    $bitrate = (float)$bitrate;
+
     if ($bitrate >= 1000000) {
-        return number_format($bitrate / 1000000, 2) . ' Mbps';
-    } elseif ($bitrate >= 1000) {
-        return number_format($bitrate / 1000, 2) . ' kbps';
-    } else {
-        return $bitrate . ' bps';
+        return number_format($bitrate / 1000000, 2, ',', '.') . ' Mbps';
     }
+    if ($bitrate >= 1000) {
+        return number_format($bitrate / 1000, 2, ',', '.') . ' kbps';
+    }
+
+    return round($bitrate) . ' bps';
 }
 
 function secondsToTimeString($seconds) {
-    $hours = floor($seconds / 3600);
-    $minutes = floor(($seconds % 3600) / 60);
-    $secs = $seconds % 60;
-    
+    $seconds = max(0.0, (float)$seconds);
+
+    $hours   = (int)floor($seconds / 3600);
+    $minutes = (int)floor(fmod($seconds, 3600) / 60);
+    // fmod statt %, sonst waren die Millisekunden bis 3.0.2 immer 000.
+    $secs    = fmod($seconds, 60);
+
     return sprintf('%02d:%02d:%06.3f', $hours, $minutes, $secs);
 }
 
 function formatDuration($seconds) {
+    $seconds = (int)$seconds;
+
     if ($seconds < 60) {
         return $seconds . 's';
-    } elseif ($seconds < 3600) {
-        return floor($seconds / 60) . 'm ' . ($seconds % 60) . 's';
-    } else {
-        $hours = floor($seconds / 3600);
-        $minutes = floor(($seconds % 3600) / 60);
-        $secs = $seconds % 60;
-        return $hours . 'h ' . $minutes . 'm ' . $secs . 's';
     }
-}
+    if ($seconds < 3600) {
+        return intdiv($seconds, 60) . 'm ' . ($seconds % 60) . 's';
+    }
 
-?>
+    return intdiv($seconds, 3600) . 'h ' . intdiv($seconds % 3600, 60) . 'm ' . ($seconds % 60) . 's';
+}
