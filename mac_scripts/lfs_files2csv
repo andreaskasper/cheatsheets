@@ -25,7 +25,7 @@
 ini_set('memory_limit', '-1');
 
 // ================ KONFIGURATION ================
-const VERSION = '3.1.0';
+const VERSION = '3.1.1';
 
 const SUPPORTED_EXTENSIONS = [
     // bis 3.0.2 bekannt
@@ -42,6 +42,9 @@ const PROGRESS_FILE_PREFIX = '.lfs_progress_';
 const PROGRESS_FILE_SUFFIX = '.jsonl';
 
 const UPDATER_NAME = 'update-andiscripts.sh';
+
+// Markierung der aktuellen Stelle im Fortschrittsbalken.
+const PROGRESS_MARKER = "\u{1F4BB}";
 
 // ================ GLOBALE VARIABLEN ================
 $config = [
@@ -76,6 +79,7 @@ $progress_file    = '';
 $progress_handle  = null;
 $counting_pass    = false;
 $resumed          = false; // true nur, wenn ein alter Lauf wirklich fortgesetzt wird
+$processing_start = 0.0;   // Beginn der Verarbeitung, Grundlage der ETA
 
 // ================ ABLAUF ================
 main();
@@ -647,9 +651,11 @@ function countFiles($dir) {
 
 // ================ VERARBEITUNG ================
 function processVideoFiles($total) {
-    global $stats, $processed_files, $config;
+    global $stats, $processed_files, $config, $processing_start;
 
     $current = 0;
+    // Eigene Startzeit: der Zaehldurchlauf davor gehoert nicht zur Schaetzung.
+    $processing_start = microtime(true);
 
     foreach (iterateFiles($config['directory']) as $file_path) {
         if (!isVideoFile($file_path)) {
@@ -1282,19 +1288,52 @@ function finalizeOutputFile() {
 
 // ================ ANZEIGE ================
 function updateProgress($current, $total, $filename) {
-    global $config;
+    global $config, $stats, $processing_start;
 
     if ($config['verbose_level'] === 0 || $total <= 0) {
         return;
     }
 
-    $percent      = round(($current / $total) * 100, 1);
-    $bar_length   = 30;
-    $filled       = min($bar_length, intval($bar_length * ($current / $total)));
-    $bar          = str_repeat('=', $filled) . str_repeat('-', $bar_length - $filled);
+    $percent    = round(($current / $total) * 100, 1);
+    $bar_length = 30;
 
-    printf("\r[%s] %5.1f%% (%d/%d) %-42s", $bar, $percent, $current, $total,
-        mb_substr($filename, 0, 42));
+    // Der Laptop markiert die aktuelle Stelle. Er belegt eine der 30 Stellen,
+    // deshalb bar_length - 1 - $filled Striche dahinter: die Breite bleibt
+    // dadurch ueber den ganzen Lauf gleich und die Zeile springt nicht.
+    $filled = intval($bar_length * ($current / $total));
+    $filled = max(0, min($bar_length - 1, $filled));
+    $bar    = str_repeat('=', $filled) . PROGRESS_MARKER
+        . str_repeat('-', $bar_length - 1 - $filled);
+
+    // Restzeit aus dem bisherigen Tempo. Grundlage sind nur die wirklich
+    // verarbeiteten Dateien: bei +resume gehen die uebersprungenen ohne
+    // nennenswerte Zeit durch und wuerden die Schaetzung zu optimistisch machen.
+    $eta  = null;
+    $done = $stats['files_processed'];
+    if ($done > 0 && $processing_start > 0.0) {
+        $elapsed = microtime(true) - $processing_start;
+        if ($elapsed > 0) {
+            $eta = ($total - $current) * ($elapsed / $done);
+        }
+    }
+
+    printf("\r[%s] %5.1f%% ETA %s (%d/%d) %-40s", $bar, $percent, formatEta($eta),
+        $current, $total, mb_substr($filename, 0, 40));
+}
+
+function formatEta($seconds) {
+    if ($seconds === null || !is_finite((float)$seconds) || $seconds < 0) {
+        return '--:--:--';
+    }
+
+    $seconds = (int)round($seconds);
+    if ($seconds > 359999) {
+        // Gedeckelt, damit die Zeile immer gleich breit bleibt.
+        return '99:59:59';
+    }
+
+    return sprintf('%02d:%02d:%02d',
+        intdiv($seconds, 3600), intdiv($seconds % 3600, 60), $seconds % 60);
 }
 
 function showStatistics() {
