@@ -25,7 +25,7 @@
 ini_set('memory_limit', '-1');
 
 // ================ KONFIGURATION ================
-const VERSION = '3.3.0';
+const VERSION = '3.4.0';
 
 const SUPPORTED_EXTENSIONS = [
     // bis 3.0.2 bekannt
@@ -34,6 +34,25 @@ const SUPPORTED_EXTENSIONS = [
     // ab 3.1.0: in Fernseh- und Kameraarchiven üblich
     '.mxf', '.mts', '.m2ts', '.dv', '.vob', '.ts', '.m2v', '.ogv', '.rm',
 ];
+
+/**
+ * Einzelbildformate. Ein Filmscan liegt darin nicht als eine Datei vor, sondern
+ * als ein Ordner voller durchnummerierter Frames. 90 Minuten bei 24 Bildern
+ * sind 129.600 Dateien.
+ *
+ * Solche Frames werden deshalb ab 3.4.0 zu einer Sequenz zusammengefasst: eine
+ * Zeile je Rolle statt einer je Bild, und ffprobe läuft nur auf dem ersten
+ * Frame. Ohne das dauerte ein Lauf über eine einzige Rolle über eine Stunde und
+ * die Tabelle wäre als Bestandsübersicht wertlos.
+ */
+const SEQUENCE_EXTENSIONS = ['.dpx', '.tif', '.tiff', '.exr', '.j2c', '.j2k', '.jp2', '.cin'];
+
+// Ab so vielen Frames wird bei einer Lücke nicht mehr aufgezählt, welche
+// Nummern fehlen, sondern nur noch wie viele.
+const SEQUENCE_LUECKEN_MAX = 200000;
+
+// So viele fehlende Bereiche werden je Sequenz im Bericht benannt.
+const SEQUENCE_LUECKEN_ZEILEN = 50;
 
 const FFPROBE_PATHS = ['/opt/homebrew/bin/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe', 'ffprobe'];
 const FFMPEG_PATHS  = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg', 'ffmpeg'];
@@ -91,6 +110,9 @@ $stats = [
     'excluded_dirs'     => 0, // per +exclude ausgelassen
     'symlink_dirs'      => 0, // verknüpfte Ordner
     'own_output'        => 0, // Tabelle oder Bericht eines früheren Laufs
+    'sequences_found'   => 0, // Bildsequenzen (DPX, TIFF …)
+    'sequence_frames'   => 0, // Einzelbilder darin, zusammengezählt
+    'sequence_gaps'     => 0, // Sequenzen mit fehlenden Framenummern
 ];
 
 $processed_files  = [];   // Pfad => true, nur bei +resume gefüllt
@@ -107,6 +129,7 @@ $report_handle    = null;
 // Anzeige während des Zähldurchlaufs
 $scan_files       = 0;
 $scan_videos      = 0;
+$scan_sequences   = 0;
 $scan_dir         = '';    // Ordner, in dem der Durchlauf gerade steckt
 $scan_next_draw   = 0.0;
 $scan_next_line   = SCAN_ZEILE_ALLE;
@@ -152,31 +175,45 @@ function main() {
 
     // Erster Durchlauf: nur zählen. Speichert keine Pfade, wird aber für die
     // Prozentanzeige gebraucht. Die Anzeige dazu macht countFiles selbst.
-    list($total_files, $video_files) = countFiles($config['directory']);
+    list($total_files, $video_files, $sequence_count) = countFiles($config['directory']);
     $stats['total_files_found'] = $total_files;
     $stats['video_files_found'] = $video_files;
 
     output("Gefunden: " . number_format($total_files, 0, ',', '.') . " Dateien insgesamt", 1);
     output("Davon Video: " . number_format($video_files, 0, ',', '.'), 1);
+    if ($sequence_count > 0) {
+        output("Bildsequenzen: " . number_format($sequence_count, 0, ',', '.')
+            . " (jede zählt als ein Eintrag)", 1);
+    }
     output("", 1);
 
-    if ($video_files === 0) {
-        output("Keine Videodateien gefunden.", 1);
-        exit(0);
-    }
+    // Eine Bildsequenz ist ein Eintrag, egal aus wie vielen Frames sie besteht.
+    $eintraege = $video_files + $sequence_count;
 
-    if (!$config['dry_run']) {
+    if ($eintraege > 0 && !$config['dry_run']) {
         initializeOutputFile();
         openProgressLog();
     }
 
     // Auch im Trockenlauf: der Bericht ist der Zweck der Kombination +dry +report.
+    // Und auch dann, wenn nichts gefunden wurde: gerade dann will man wissen,
+    // was stattdessen im Ordner liegt. Bis 3.3.0 stieg das Programm hier aus,
+    // bevor der Bericht überhaupt geöffnet war.
     openReport();
 
-    // Zweiter Durchlauf: verarbeiten, streamend.
-    processVideoFiles($video_files);
+    if ($eintraege === 0) {
+        output("Keine Videodateien und keine Bildsequenzen gefunden.", 1);
+        if ($config['report']) {
+            output("Der Bericht listet auf, was stattdessen im Ordner liegt.", 1);
+        } else {
+            output("Ein Lauf mit +report listet auf, was stattdessen im Ordner liegt.", 1);
+        }
+    }
 
-    if (!$config['dry_run']) {
+    // Zweiter Durchlauf: verarbeiten, streamend.
+    processVideoFiles($eintraege);
+
+    if ($eintraege > 0 && !$config['dry_run']) {
         finalizeOutputFile();
     }
 
@@ -292,6 +329,10 @@ function showUsage() {
     echo "Metadaten in eine Tabelle. Die Ausgabedatei landet in <ordner> selbst,\n";
     echo "also beim Material. Ausgaben früherer Läufe werden dabei erkannt und\n";
     echo "nicht noch einmal mitgezählt.\n\n";
+    echo "Bildsequenzen (DPX, TIFF, EXR, JPEG2000, Cineon) werden zu einem\n";
+    echo "Eintrag zusammengefasst: eine Zeile je Rolle statt einer je Frame.\n";
+    echo "Die Spalte Frames enthält die Anzahl, der Dateiname die Nummernspanne,\n";
+    echo "etwa scan_[000001-014400].dpx. Fehlende Framenummern werden gemeldet.\n\n";
     echo "Optionen:\n";
     echo "  +md5              MD5- und SHA1-Prüfsumme berechnen (deutlich langsamer)\n";
     echo "  +json             Ausgabe als JSON statt CSV\n";
@@ -324,6 +365,7 @@ function showUsage() {
     echo "  archiv_<zeitstempel>.bericht.txt neben der Tabelle abgelegt, eine\n";
     echo "  Zeile je Datei mit Grund:\n";
     echo "    NICHT-VIDEO    keine bekannte Videoendung\n";
+    echo "    FRAMES-FEHLEN  Lücke in einer Bildsequenz, mit den Nummern\n";
     echo "    AUSGELASSEN    versteckt, verknüpft oder per +exclude ausgeschlossen\n";
     echo "    ERLEDIGT  in einem früheren Lauf schon erledigt (+resume)\n";
     echo "    FEHLER         Datei oder Ordner ließ sich nicht lesen\n";
@@ -687,6 +729,11 @@ function finalizeReport() {
     if ($stats['own_output'] > 0) {
         berichtZeile('Ausgaben früherer Läufe', $stats['own_output']);
     }
+    if ($stats['sequences_found'] > 0) {
+        berichtZeile('Bildsequenzen', $stats['sequences_found']);
+        berichtZeile('Frames darin', number_format($stats['sequence_frames'], 0, ',', '.'), 4);
+        berichtZeile('mit fehlenden Frames', $stats['sequence_gaps'], 4);
+    }
 
     // Damit der Bericht für sich allein steht und nicht neben dem
     // Bildschirmprotokoll gelesen werden muss.
@@ -830,6 +877,136 @@ function isVideoFile($path) {
 }
 
 /**
+ * Zerlegt einen Frame-Dateinamen in Sequenz und Nummer.
+ *
+ * scan_000123.dpx  ->  Vorspann "scan_", Nummer 123, sechs Stellen
+ *
+ * Der Schlüssel enthält Ordner, Vorspann, Endung und Stellenzahl. Damit sind
+ * scan_1.dpx und scan_000001.dpx zwei verschiedene Sequenzen, was sie in der
+ * Praxis auch sind. Ein Einzelbild ohne Nummer wird als Sequenz aus einem Bild
+ * behandelt.
+ *
+ * Liefert null, wenn die Datei kein Einzelbildformat ist.
+ */
+function sequenceInfo($path) {
+    $name = basename($path);
+
+    if (isHiddenName($name)) {
+        return null;
+    }
+
+    $punkt = strrpos($name, '.');
+    if ($punkt === false || $punkt === 0) {
+        return null;
+    }
+
+    $endung = strtolower(substr($name, $punkt));
+    if (!in_array($endung, SEQUENCE_EXTENSIONS, true)) {
+        return null;
+    }
+
+    $stamm   = substr($name, 0, $punkt);
+    $ordner  = dirname($path);
+    $treffer = [];
+
+    if (preg_match('/^(.*?)(\d+)$/', $stamm, $treffer)) {
+        $vorspann = $treffer[1];
+        $stellen  = strlen($treffer[2]);
+        $nummer   = (int)$treffer[2];
+    } else {
+        $vorspann = $stamm;
+        $stellen  = 0;
+        $nummer   = null;
+    }
+
+    return [
+        'key'      => $ordner . "\0" . $vorspann . "\0" . $endung . "\0" . $stellen,
+        'dir'      => $ordner,
+        'vorspann' => $vorspann,
+        'endung'   => $endung,
+        'stellen'  => $stellen,
+        'nummer'   => $nummer,
+    ];
+}
+
+/**
+ * Baut den Anzeigenamen einer Sequenz: scan_[000001-014400].dpx
+ */
+function sequenceName($seq) {
+    if ($seq['stellen'] === 0) {
+        return $seq['vorspann'] . $seq['endung'];
+    }
+
+    return $seq['vorspann']
+        . '[' . str_pad((string)$seq['min'], $seq['stellen'], '0', STR_PAD_LEFT)
+        . '-' . str_pad((string)$seq['max'], $seq['stellen'], '0', STR_PAD_LEFT) . ']'
+        . $seq['endung'];
+}
+
+/**
+ * Sucht die fehlenden Nummern einer Sequenz. Wird nur aufgerufen, wenn die
+ * Zählung vorher schon gezeigt hat, dass welche fehlen: dann lohnt der zweite
+ * Blick in genau diesen einen Ordner.
+ *
+ * Liefert eine Liste von Bereichen als Text, etwa ['00042', '00100-00107'].
+ */
+function sequenceLuecken($seq) {
+    $vorhanden = [];
+    $handle    = @opendir($seq['dir']);
+
+    if ($handle === false) {
+        return [];
+    }
+
+    $muster = '/^' . preg_quote($seq['vorspann'], '/')
+        . '(\d{' . $seq['stellen'] . '})'
+        . preg_quote($seq['endung'], '/') . '$/i';
+
+    while (($item = readdir($handle)) !== false) {
+        $t = [];
+        if (preg_match($muster, $item, $t)) {
+            $vorhanden[(int)$t[1]] = true;
+        }
+    }
+    closedir($handle);
+
+    $bereiche = [];
+    $start    = null;
+
+    for ($i = $seq['min']; $i <= $seq['max']; $i++) {
+        if (!isset($vorhanden[$i])) {
+            if ($start === null) {
+                $start = $i;
+            }
+            continue;
+        }
+
+        if ($start !== null) {
+            $bereiche[] = lueckenText($start, $i - 1, $seq['stellen']);
+            $start = null;
+            if (count($bereiche) >= SEQUENCE_LUECKEN_ZEILEN) {
+                return $bereiche;
+            }
+        }
+    }
+
+    if ($start !== null) {
+        $bereiche[] = lueckenText($start, $seq['max'], $seq['stellen']);
+    }
+
+    return $bereiche;
+}
+
+function lueckenText($von, $bis, $stellen) {
+    $a = str_pad((string)$von, $stellen, '0', STR_PAD_LEFT);
+    if ($von === $bis) {
+        return $a;
+    }
+
+    return $a . '-' . str_pad((string)$bis, $stellen, '0', STR_PAD_LEFT);
+}
+
+/**
  * Seit 3.3.0 liegen Tabelle und Bericht im durchsuchten Ordner. Ohne diese
  * Prüfung würde ein zweiter Lauf die Ergebnisse des ersten mitzählen. Erkannt
  * wird nur der eigene Namensaufbau, und nur direkt im durchsuchten Ordner.
@@ -841,19 +1018,33 @@ function istEigeneAusgabe($path) {
         return false;
     }
 
+    $name = basename($path);
+
+    // Die Fortschrittsdatei gehört genauso dazu. Sie ist versteckt und würde
+    // sonst als "versteckte Datei" in der Bilanz auftauchen.
+    if (preg_match('/^' . preg_quote(PROGRESS_FILE_PREFIX, '/') . '[0-9a-f]+'
+        . preg_quote(PROGRESS_FILE_SUFFIX, '/') . '$/', $name)) {
+        return true;
+    }
+
     return (bool)preg_match(
         '/^archiv_\d{8}T\d{6}(-\d+)?\.(csv|json|xml|bericht\.txt)$/',
-        basename($path)
+        $name
     );
 }
 
 function countFiles($dir) {
-    global $counting_pass, $scan_files, $scan_videos, $scan_dir;
+    global $counting_pass, $scan_files, $scan_videos, $scan_sequences, $scan_dir;
 
-    $counting_pass = true;
-    $scan_files    = 0;
-    $scan_videos   = 0;
-    $scan_dir      = $dir;
+    $counting_pass  = true;
+    $scan_files     = 0;
+    $scan_videos    = 0;
+    $scan_sequences = 0;
+    $scan_dir       = $dir;
+
+    // Nur die Schlüssel, nicht die Frames: davon gibt es je Rolle einen, nicht
+    // hunderttausend.
+    $schluessel = [];
 
     foreach (iterateFiles($dir) as $path) {
         if (istEigeneAusgabe($path)) {
@@ -861,8 +1052,15 @@ function countFiles($dir) {
         }
 
         $scan_files++;
+
         if (isVideoFile($path)) {
             $scan_videos++;
+        } else {
+            $seq = sequenceInfo($path);
+            if ($seq !== null && !isset($schluessel[$seq['key']])) {
+                $schluessel[$seq['key']] = true;
+                $scan_sequences = count($schluessel);
+            }
         }
 
         zeigeZaehlstand();
@@ -871,7 +1069,7 @@ function countFiles($dir) {
     beendeZaehlstand();
     $counting_pass = false;
 
-    return [$scan_files, $scan_videos];
+    return [$scan_files, $scan_videos, $scan_sequences];
 }
 
 // ================ ANZEIGE WAEHREND DES ZAEHLENS ================
@@ -941,7 +1139,7 @@ function kuerzeVorn($pfad, $max) {
 }
 
 function zeigeZaehlstand() {
-    global $config, $scan_files, $scan_videos, $scan_dir,
+    global $config, $scan_files, $scan_videos, $scan_sequences, $scan_dir,
            $scan_next_draw, $scan_next_line, $scan_frame;
 
     if ($config['verbose_level'] === 0) {
@@ -966,10 +1164,15 @@ function zeigeZaehlstand() {
     $kringel = SPINNER_FRAMES[$scan_frame % count(SPINNER_FRAMES)];
     $scan_frame++;
 
-    $vorn = sprintf('%s Zähle … %s Dateien (%s Video)   ',
+    $was = number_format($scan_videos, 0, ',', '.') . ' Video';
+    if ($scan_sequences > 0) {
+        $was .= ', ' . number_format($scan_sequences, 0, ',', '.') . ' Sequenzen';
+    }
+
+    $vorn = sprintf('%s Zähle … %s Dateien (%s)   ',
         $kringel,
         number_format($scan_files, 0, ',', '.'),
-        number_format($scan_videos, 0, ',', '.'));
+        $was);
 
     $platz = terminalBreite() - mb_strlen($vorn) - 1;
     // \033[K räumt den Rest der Zeile auf, ohne mit Leerzeichen zu füllen.
@@ -990,7 +1193,8 @@ function beendeZaehlstand() {
 function processVideoFiles($total) {
     global $stats, $processed_files, $config, $processing_start;
 
-    $current = 0;
+    $current   = 0;
+    $sequenzen = [];
     // Eigene Startzeit: der Zähldurchlauf davor gehört nicht zur Schätzung.
     $processing_start = microtime(true);
 
@@ -1014,6 +1218,14 @@ function processVideoFiles($total) {
         }
 
         if (!hasVideoExtension($name)) {
+            // Einzelbilder sammeln statt einzeln verarbeiten. Im Speicher liegt
+            // nur ein Eintrag je Sequenz, nie die Frames selbst.
+            $seq = sequenceInfo($file_path);
+            if ($seq !== null) {
+                merkeSequenz($sequenzen, $seq, $file_path);
+                continue;
+            }
+
             $stats['non_video']++;
             reportLine('NICHT-VIDEO', $file_path, 'keine bekannte Videoendung');
             continue;
@@ -1051,9 +1263,168 @@ function processVideoFiles($total) {
         $stats['total_size'] += $size;
     }
 
+    // Die Sequenzen kommen zum Schluss: erst wenn der ganze Baum durch ist,
+    // steht fest, wie viele Frames zu welcher Rolle gehören.
+    foreach ($sequenzen as $seq) {
+        $current++;
+
+        if (isset($processed_files[$seq['key']])) {
+            $stats['files_skipped']++;
+            reportLine('ERLEDIGT', $seq['dir'] . '/' . sequenceName($seq),
+                'in einem früheren Lauf erledigt');
+            updateProgress($current, $total, sequenceName($seq) . ' (übersprungen)');
+            continue;
+        }
+
+        updateProgress($current, $total, sequenceName($seq));
+
+        $stats['sequences_found']++;
+        $stats['sequence_frames'] += $seq['count'];
+        $stats['total_size']      += $seq['size'];
+
+        if ($config['dry_run']) {
+            output("\nWürde verarbeiten: " . $seq['dir'] . '/' . sequenceName($seq), 2);
+            $stats['files_processed']++;
+            continue;
+        }
+
+        if (processSequence($seq)) {
+            $stats['files_processed']++;
+            saveProgress($seq['key']);
+        } else {
+            $stats['errors']++;
+            reportLine('FEHLER', $seq['first_path'],
+                'erster Frame der Sequenz nicht lesbar');
+        }
+    }
+
     if ($config['verbose_level'] > 0 && istTerminal()) {
         echo "\n";
     }
+}
+
+/**
+ * Nimmt einen Frame in die Sequenz auf, zu der er gehört. Gespeichert werden
+ * nur Zähler und Grenzen, nie die Pfade der Frames.
+ */
+function merkeSequenz(&$sequenzen, $seq, $pfad) {
+    $key   = $seq['key'];
+    $groe  = @filesize($pfad);
+    $groe  = ($groe === false) ? 0 : $groe;
+    $nr    = ($seq['nummer'] === null) ? 0 : $seq['nummer'];
+
+    if (!isset($sequenzen[$key])) {
+        $sequenzen[$key] = [
+            'key'        => $key,
+            'dir'        => $seq['dir'],
+            'vorspann'   => $seq['vorspann'],
+            'endung'     => $seq['endung'],
+            'stellen'    => $seq['stellen'],
+            'count'      => 0,
+            'min'        => $nr,
+            'max'        => $nr,
+            'size'       => 0,
+            'first_path' => $pfad,
+        ];
+    }
+
+    $eintrag = &$sequenzen[$key];
+    $eintrag['count']++;
+    $eintrag['size'] += $groe;
+
+    if ($nr < $eintrag['min']) {
+        $eintrag['min']        = $nr;
+        $eintrag['first_path'] = $pfad;
+    }
+    if ($nr > $eintrag['max']) {
+        $eintrag['max'] = $nr;
+    }
+    unset($eintrag);
+}
+
+/**
+ * Eine Sequenz auswerten: ffprobe läuft nur auf dem ersten Frame, alles andere
+ * kommt aus der Zählung.
+ */
+function processSequence($seq) {
+    global $config, $stats;
+
+    $metadata = getVideoMetadata($seq['first_path']);
+    if ($metadata === false) {
+        error("Erster Frame nicht lesbar: " . $seq['first_path'], false);
+        return false;
+    }
+
+    // Ein Einzelbild hat weder Dauer noch Bildrate. Diese Felder bleiben leer,
+    // statt eine Bildrate zu erfinden, die niemand nachprüfen kann.
+    $metadata['duration']         = '';
+    $metadata['duration_seconds'] = '';
+    $metadata['frame_rate']       = '';
+    $metadata['frames']           = $seq['count'];
+
+    $md5  = '';
+    $sha1 = '';
+    if ($config['checksum_enabled']) {
+        // Über die ganze Rolle wäre das Stunden. Die Prüfsumme bezieht sich
+        // deshalb auf den ersten Frame und ist als Kennung zu lesen, nicht als
+        // Nachweis für die Sequenz. Dafür ist md5er da.
+        $md5  = (string)md5_file($seq['first_path']);
+        $sha1 = (string)sha1_file($seq['first_path']);
+    }
+
+    pruefeSequenzLuecken($seq);
+
+    $record = [
+        'path'            => $seq['dir'],
+        'filename'        => sequenceName($seq),
+        'file_size'       => $seq['size'],
+        'file_size_human' => formatBytes($seq['size'], 1),
+        'md5'             => $md5,
+        'sha1'            => $sha1,
+    ] + $metadata;
+
+    return writeToOutputFile($record);
+}
+
+/**
+ * Fehlt eine Framenummer, ist das kein Fehler des Programms, sondern ein
+ * Schaden am Material. Deshalb landet er im Bericht und in der Bilanz, nicht
+ * im Fehlerzähler.
+ */
+function pruefeSequenzLuecken($seq) {
+    global $stats;
+
+    if ($seq['stellen'] === 0) {
+        return;
+    }
+
+    $spanne = $seq['max'] - $seq['min'] + 1;
+    if ($spanne === $seq['count']) {
+        return;
+    }
+
+    $fehlend = $spanne - $seq['count'];
+    $stats['sequence_gaps']++;
+
+    $wo = $seq['dir'] . '/' . sequenceName($seq);
+
+    if ($seq['count'] > SEQUENCE_LUECKEN_MAX) {
+        reportLine('FRAMES-FEHLEN', $wo, $fehlend . ' Frames fehlen');
+        return;
+    }
+
+    $bereiche = sequenceLuecken($seq);
+    if (empty($bereiche)) {
+        reportLine('FRAMES-FEHLEN', $wo, $fehlend . ' Frames fehlen');
+        return;
+    }
+
+    $text = implode(', ', $bereiche);
+    if (count($bereiche) >= SEQUENCE_LUECKEN_ZEILEN) {
+        $text .= ', …';
+    }
+
+    reportLine('FRAMES-FEHLEN', $wo, $fehlend . ' Frames fehlen: ' . $text);
 }
 
 function processVideoFile($file_path, $file_size) {
@@ -1722,6 +2093,16 @@ function showStatistics() {
     output("Verarbeitet: " . number_format($stats['files_processed'], 0, ',', '.'), 1);
     output("Übersprungen: " . number_format($stats['files_skipped'], 0, ',', '.'), 1);
     output("Fehler: " . number_format($stats['errors'], 0, ',', '.'), 1);
+
+    if ($stats['sequences_found'] > 0) {
+        output("Bildsequenzen: " . number_format($stats['sequences_found'], 0, ',', '.')
+            . " aus " . number_format($stats['sequence_frames'], 0, ',', '.') . " Frames", 1);
+        if ($stats['sequence_gaps'] > 0) {
+            output("Sequenzen mit fehlenden Frames: "
+                . number_format($stats['sequence_gaps'], 0, ',', '.')
+                . ", welche Nummern fehlen steht im Bericht", 1);
+        }
+    }
 
     // Die Differenz zwischen "Dateien insgesamt" und "Videodateien" aufgelöst.
     output("Nicht erfasst: " . number_format($nicht_erfasst, 0, ',', '.')
