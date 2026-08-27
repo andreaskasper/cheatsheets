@@ -25,7 +25,7 @@
 ini_set('memory_limit', '-1');
 
 // ================ KONFIGURATION ================
-const VERSION = '3.1.1';
+const VERSION = '3.2.0';
 
 const SUPPORTED_EXTENSIONS = [
     // bis 3.0.2 bekannt
@@ -56,6 +56,7 @@ $config = [
     'verbose_level'    => 1, // 0=quiet, 1=normal, 2=verbose
     'resume'           => false,
     'raw_data'         => false,
+    'report'           => false,
     'exclude_patterns' => [],
     'ffprobe_path'     => '',
     'ffmpeg_path'      => '',
@@ -70,6 +71,13 @@ $stats = [
     'errors'            => 0,
     'start_time'        => 0,
     'total_size'        => 0,
+    // Was nicht in der Tabelle landet, aufgeschluesselt nach Grund. Mit +report
+    // steht jeder einzelne Pfad dazu in der Berichtsdatei.
+    'non_video'         => 0, // keine bekannte Videoendung
+    'hidden_files'      => 0, // versteckte Dateien
+    'hidden_dirs'       => 0, // versteckte Ordner
+    'excluded_dirs'     => 0, // per +exclude ausgelassen
+    'symlink_dirs'      => 0, // verknuepfte Ordner
 ];
 
 $processed_files  = [];   // Pfad => true, nur bei +resume gefuellt
@@ -80,6 +88,8 @@ $progress_handle  = null;
 $counting_pass    = false;
 $resumed          = false; // true nur, wenn ein alter Lauf wirklich fortgesetzt wird
 $processing_start = 0.0;   // Beginn der Verarbeitung, Grundlage der ETA
+$report_file      = '';
+$report_handle    = null;
 
 // ================ ABLAUF ================
 main();
@@ -111,6 +121,9 @@ function main() {
     if ($config['raw_data']) {
         output("Rohdaten-Spalte aktiv (+raw)", 1);
     }
+    if ($config['report']) {
+        output("Bericht wird mitgeschrieben (+report)", 1);
+    }
     if (!empty($config['exclude_patterns'])) {
         output("Ausgeschlossen: " . implode(', ', $config['exclude_patterns']), 1);
     }
@@ -137,6 +150,9 @@ function main() {
         openProgressLog();
     }
 
+    // Auch im Trockenlauf: der Bericht ist der Zweck der Kombination +dry +report.
+    openReport();
+
     // Zweiter Durchlauf: verarbeiten, streamend.
     processVideoFiles($video_files);
 
@@ -144,6 +160,7 @@ function main() {
         finalizeOutputFile();
     }
 
+    finalizeReport();
     showStatistics();
     cleanup();
 
@@ -224,6 +241,9 @@ function parseArguments() {
             case '+raw':
                 $config['raw_data'] = true;
                 break;
+            case '+report':
+                $config['report'] = true;
+                break;
             default:
                 if (strpos($arg, '+exclude=') === 0) {
                     $pattern = substr($arg, 9);
@@ -256,6 +276,8 @@ function showUsage() {
     echo "  +json             Ausgabe als JSON statt CSV\n";
     echo "  +xml              Ausgabe als XML statt CSV\n";
     echo "  +raw              Komplette ffprobe-Ausgabe als zusaetzliche Spalte\n";
+    echo "  +report           Bericht schreiben: welche Dateien nicht in der\n";
+    echo "                    Tabelle gelandet sind und warum\n";
     echo "  +dry              Trockenlauf, zeigt nur was passieren wuerde\n";
     echo "  +quiet            Nur das Noetigste ausgeben\n";
     echo "  +verbose          Ausfuehrliche Ausgabe\n";
@@ -275,10 +297,23 @@ function showUsage() {
     echo "  1  mindestens eine Datei liess sich nicht lesen, oder Aufruffehler\n";
     echo "     In dem Fall bleibt die Fortschrittsdatei liegen und der Lauf laesst\n";
     echo "     sich mit +resume wiederholen.\n\n";
+    echo "Der Bericht mit +report:\n";
+    echo "  Die Zusammenfassung sagt, WIE VIELE Dateien nicht in der Tabelle\n";
+    echo "  stehen. Der Bericht sagt, WELCHE es sind. Er wird als\n";
+    echo "  archiv_<zeitstempel>.bericht.txt neben der Tabelle abgelegt, eine\n";
+    echo "  Zeile je Datei mit Grund:\n";
+    echo "    NICHT-VIDEO    keine bekannte Videoendung\n";
+    echo "    AUSGELASSEN    versteckt, verknuepft oder per +exclude ausgeschlossen\n";
+    echo "    UEBERSPRUNGEN  in einem frueheren Lauf schon erledigt (+resume)\n";
+    echo "    FEHLER         Datei oder Ordner liess sich nicht lesen\n";
+    echo "  Mit 'grep FEHLER' oder 'grep NICHT-VIDEO' laesst sich gezielt suchen.\n";
+    echo "  +dry +report zeigt das alles, ohne eine Tabelle zu schreiben.\n\n";
     echo "Beispiele:\n";
     echo "  lfs_files2csv /Volumes/Archiv/2024\n";
     echo "  lfs_files2csv /Volumes/Archiv/2024 +info=more +json\n";
     echo "  lfs_files2csv /Volumes/Archiv/2024 +info=max +md5 +verbose\n";
+    echo "  lfs_files2csv /Volumes/Archiv/2024 +report\n";
+    echo "  lfs_files2csv /Volumes/Archiv/2024 +dry +report\n";
     echo "  lfs_files2csv /Volumes/Archiv/2024 +exclude=Proxy +dry\n";
     echo "  lfs_files2csv /Volumes/Archiv/2024 +resume\n\n";
     echo "Richtwerte pro Datei:\n";
@@ -519,6 +554,83 @@ function saveProgress($file_path) {
     fflush($progress_handle);
 }
 
+// ================ BERICHT ================
+/**
+ * Der Bericht wird waehrend des Durchlaufs zeilenweise geschrieben, nicht am
+ * Ende aus einer Liste. Sonst haette man sich genau das Speicherproblem
+ * zurueckgeholt, das in 3.1.0 beseitigt wurde.
+ */
+function openReport() {
+    global $config, $report_file, $report_handle, $output_file;
+
+    if (!$config['report']) {
+        return;
+    }
+
+    // archiv_20260827T101500.csv  ->  archiv_20260827T101500.bericht.txt
+    $report_file = preg_replace('/\.[^.\/]+$/', '', $output_file) . '.bericht.txt';
+
+    // Anhaengen, damit bei +resume der Bericht des ersten Laufs erhalten bleibt.
+    $report_handle = @fopen($report_file, 'a');
+    if ($report_handle === false) {
+        error("Bericht nicht schreibbar: $report_file", false);
+        $report_handle = null;
+        return;
+    }
+
+    fwrite($report_handle, str_repeat('=', 78) . "\n");
+    fwrite($report_handle, "Bericht: was nicht in der Tabelle steht\n");
+    fwrite($report_handle, "Ordner:  " . $config['directory_real'] . "\n");
+    fwrite($report_handle, "Tabelle: " . $output_file . "\n");
+    fwrite($report_handle, "Lauf:    " . date('Y-m-d H:i:s') . ", lfs_files2csv " . VERSION . "\n");
+    if ($config['dry_run']) {
+        fwrite($report_handle, "Hinweis: Trockenlauf, es wurde keine Tabelle geschrieben.\n");
+    }
+    fwrite($report_handle, str_repeat('=', 78) . "\n\n");
+    fflush($report_handle);
+}
+
+function reportLine($category, $path, $reason = '') {
+    global $report_handle;
+
+    if ($report_handle === null) {
+        return;
+    }
+
+    fwrite($report_handle, sprintf("%-14s %s%s\n", $category, $path,
+        $reason !== '' ? '   [' . $reason . ']' : ''));
+}
+
+function finalizeReport() {
+    global $report_handle, $stats, $config;
+
+    if ($report_handle === null) {
+        return;
+    }
+
+    $nicht_erfasst = $stats['non_video'] + $stats['hidden_files'];
+
+    fwrite($report_handle, "\n" . str_repeat('-', 78) . "\n");
+    fwrite($report_handle, "Zusammenfassung dieses Laufs\n\n");
+    fwrite($report_handle, sprintf("  Dateien insgesamt:        %d\n", $stats['total_files_found']));
+    fwrite($report_handle, sprintf("  Videodateien:             %d\n", $stats['video_files_found']));
+    fwrite($report_handle, sprintf("  Verarbeitet:              %d\n", $stats['files_processed']));
+    fwrite($report_handle, sprintf("  Uebersprungen:            %d\n", $stats['files_skipped']));
+    fwrite($report_handle, sprintf("  Fehler:                   %d\n", $stats['errors']));
+    fwrite($report_handle, sprintf("  Nicht erfasst:            %d\n", $nicht_erfasst));
+    fwrite($report_handle, sprintf("    keine Videoendung:      %d\n", $stats['non_video']));
+    fwrite($report_handle, sprintf("    versteckte Dateien:     %d\n", $stats['hidden_files']));
+    fwrite($report_handle, sprintf("  Ausgelassene Ordner:      %d\n",
+        $stats['hidden_dirs'] + $stats['excluded_dirs'] + $stats['symlink_dirs']));
+    fwrite($report_handle, sprintf("    versteckt:              %d\n", $stats['hidden_dirs']));
+    fwrite($report_handle, sprintf("    per +exclude:           %d\n", $stats['excluded_dirs']));
+    fwrite($report_handle, sprintf("    Symlink:                %d\n", $stats['symlink_dirs']));
+    fwrite($report_handle, "\nEnde des Laufs: " . date('Y-m-d H:i:s') . "\n\n");
+
+    fclose($report_handle);
+    $report_handle = null;
+}
+
 function promptYesNo($question) {
     if (!function_exists('readline')) {
         echo $question . " (j/N): ";
@@ -547,6 +659,8 @@ function iterateFiles($dir) {
         if (isExcluded($current)) {
             if (!$counting_pass) {
                 output("Uebersprungen: $current", 2);
+                $stats['excluded_dirs']++;
+                reportLine('AUSGELASSEN', $current, 'Ordner passt auf ein +exclude-Muster');
             }
             continue;
         }
@@ -556,6 +670,7 @@ function iterateFiles($dir) {
             if (!$counting_pass) {
                 error("Ordner nicht lesbar: $current", false);
                 $stats['errors']++;
+                reportLine('FEHLER', $current, 'Ordner nicht lesbar');
             }
             continue;
         }
@@ -573,6 +688,8 @@ function iterateFiles($dir) {
                 // bei einer Schleife endlos.
                 if (!$counting_pass) {
                     output("Symlink auf Ordner uebersprungen: $full", 2);
+                    $stats['symlink_dirs']++;
+                    reportLine('AUSGELASSEN', $full, 'Verknuepfung auf einen Ordner');
                 }
                 continue;
             }
@@ -581,9 +698,11 @@ function iterateFiles($dir) {
                 // Versteckte Ordner auslassen, genau wie md5er und md5check es
                 // tun. Auf Mac-Volumes liegen dort .Trashes, .Spotlight-V100
                 // und .fseventsd, deren Inhalt nicht zum Bestand gehoert.
-                if (strpos($item, '.') === 0) {
+                if (isHiddenName($item)) {
                     if (!$counting_pass) {
                         output("Versteckter Ordner uebersprungen: $full", 2);
+                        $stats['hidden_dirs']++;
+                        reportLine('AUSGELASSEN', $full, 'versteckter Ordner');
                     }
                     continue;
                 }
@@ -612,22 +731,28 @@ function isExcluded($path) {
     return false;
 }
 
-function isVideoFile($path) {
-    $name = basename($path);
+/**
+ * Versteckte Dateien und Ordner gehoeren nicht zum Bestand. Dazu zaehlen auch
+ * die AppleDouble-Reste (._name.mov) auf exFAT- und Netzlaufwerken: sie heissen
+ * wie das Original, enthalten aber kein Bild.
+ */
+function isHiddenName($name) {
+    return strpos($name, '.') === 0;
+}
 
-    // Versteckte Dateien gehoeren nicht zum Bestand. Dazu zaehlen auch die
-    // AppleDouble-Reste (._name.mov) auf exFAT- und Netzlaufwerken: sie heissen
-    // wie das Original, enthalten aber kein Bild.
-    if (strpos($name, '.') === 0) {
-        return false;
-    }
-
+function hasVideoExtension($name) {
     $dot = strrpos($name, '.');
     if ($dot === false || $dot === 0) {
         return false;
     }
 
     return in_array(strtolower(substr($name, $dot)), SUPPORTED_EXTENSIONS, true);
+}
+
+function isVideoFile($path) {
+    $name = basename($path);
+
+    return !isHiddenName($name) && hasVideoExtension($name);
 }
 
 function countFiles($dir) {
@@ -658,7 +783,19 @@ function processVideoFiles($total) {
     $processing_start = microtime(true);
 
     foreach (iterateFiles($config['directory']) as $file_path) {
-        if (!isVideoFile($file_path)) {
+        $name = basename($file_path);
+
+        // Alles, was hier aussortiert wird, taucht in der Tabelle nicht auf.
+        // Genau danach fragt man sich hinterher, deshalb Zaehler und Bericht.
+        if (isHiddenName($name)) {
+            $stats['hidden_files']++;
+            reportLine('AUSGELASSEN', $file_path, 'versteckte Datei');
+            continue;
+        }
+
+        if (!hasVideoExtension($name)) {
+            $stats['non_video']++;
+            reportLine('NICHT-VIDEO', $file_path, 'keine bekannte Videoendung');
             continue;
         }
 
@@ -666,7 +803,8 @@ function processVideoFiles($total) {
 
         if (isset($processed_files[$file_path])) {
             $stats['files_skipped']++;
-            updateProgress($current, $total, basename($file_path) . ' (uebersprungen)');
+            reportLine('UEBERSPRUNGEN', $file_path, 'in einem frueheren Lauf erledigt');
+            updateProgress($current, $total, $name . ' (uebersprungen)');
             continue;
         }
 
@@ -686,6 +824,7 @@ function processVideoFiles($total) {
                 saveProgress($file_path);
             } else {
                 $stats['errors']++;
+                reportLine('FEHLER', $file_path, 'ffprobe konnte die Datei nicht lesen');
             }
         }
 
@@ -1337,9 +1476,11 @@ function formatEta($seconds) {
 }
 
 function showStatistics() {
-    global $stats, $config, $output_file;
+    global $stats, $config, $output_file, $report_file;
 
-    $duration = max(0, time() - $stats['start_time']);
+    $duration      = max(0, time() - $stats['start_time']);
+    $nicht_erfasst = $stats['non_video'] + $stats['hidden_files'];
+    $ordner_aus    = $stats['hidden_dirs'] + $stats['excluded_dirs'] + $stats['symlink_dirs'];
 
     output("", 1);
     output("=== Zusammenfassung ===", 1);
@@ -1349,6 +1490,19 @@ function showStatistics() {
     output("Verarbeitet: " . number_format($stats['files_processed'], 0, ',', '.'), 1);
     output("Uebersprungen: " . number_format($stats['files_skipped'], 0, ',', '.'), 1);
     output("Fehler: " . number_format($stats['errors'], 0, ',', '.'), 1);
+
+    // Die Differenz zwischen "Dateien insgesamt" und "Videodateien" aufgeloest.
+    output("Nicht erfasst: " . number_format($nicht_erfasst, 0, ',', '.')
+        . " (" . number_format($stats['non_video'], 0, ',', '.') . " ohne Videoendung, "
+        . number_format($stats['hidden_files'], 0, ',', '.') . " versteckt)", 1);
+
+    if ($ordner_aus > 0) {
+        output("Ausgelassene Ordner: " . number_format($ordner_aus, 0, ',', '.')
+            . " (" . $stats['hidden_dirs'] . " versteckt, "
+            . $stats['excluded_dirs'] . " per +exclude, "
+            . $stats['symlink_dirs'] . " Symlink)", 1);
+    }
+
     output("Datenmenge: " . formatBytes($stats['total_size']), 1);
     output("Laufzeit: " . formatDuration($duration), 1);
 
@@ -1364,6 +1518,13 @@ function showStatistics() {
     if (!$config['dry_run']) {
         output("Ausgabedatei: " . $output_file, 1);
     }
+
+    if ($report_file !== '') {
+        output("Bericht: " . $report_file, 1);
+    } elseif ($nicht_erfasst > 0 || $stats['errors'] > 0 || $ordner_aus > 0) {
+        output("Welche Dateien das genau sind, listet ein Lauf mit +report auf.", 1);
+    }
+
     output("Fertig: " . date('Y-m-d H:i:s'), 1);
 }
 
