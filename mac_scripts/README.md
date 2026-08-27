@@ -150,6 +150,46 @@ Richtwerte pro Datei: standard rund 0,1 Sekunden, more 0,2, max 0,5, full 1 bis 
 Bei 5000 Dateien ist das der Unterschied zwischen zehn Minuten und mehreren
 Stunden.
 
+### Bildsequenzen: DPX, TIFF und Verwandte
+
+Ein Filmscan liegt nicht als eine Datei vor, sondern als Ordner voller
+durchnummerierter Einzelbilder. 90 Minuten bei 24 Bildern sind 129.600 Dateien.
+
+Solche Sequenzen werden zu **einem** Eintrag zusammengefasst:
+
+```
+Datei                       Frames    Größe    Pfad
+scan_[000001-014400].dpx     14400    3,1 TB   /Volumes/Archiv/Rolle_01
+```
+
+Erkannt werden `.dpx`, `.tif`, `.tiff`, `.exr`, `.j2c`, `.j2k`, `.jp2` und
+`.cin`. Zusammen gehört, was im selben Ordner denselben Namensanfang, dieselbe
+Endung und dieselbe Stellenzahl hat. Ein einzelnes Bild ohne Nummer wird eine
+Sequenz aus einem Bild.
+
+Auflösung, Codec, Farbraum und Bittiefe kommen aus dem ersten Frame, die
+Framezahl und die Gesamtgröße aus der Zählung. Dauer und Bildrate bleiben leer:
+ein Einzelbild kennt beides nicht, und eine Bildrate zu erfinden wäre eine
+Angabe, die niemand nachprüfen kann.
+
+Ohne diese Zusammenfassung würde eine 90-Minuten-Rolle 129.600 Tabellenzeilen
+und über eine Stunde reine ffprobe-Laufzeit erzeugen. Gemessen an 30.000 Frames
+in zehn Rollen: 10 Zeilen, 0,55 Sekunden, unverändert 2 MB Spitzenspeicher.
+
+**Fehlende Frames** fallen dabei auf und stehen im Bericht:
+
+```
+FRAMES-FEHLEN  /Volumes/Archiv/Rolle_01/scan_[000001-014400].dpx   [5 Frames fehlen: 000005, 000010-000013]
+```
+
+Eine Lücke im Scan ist ein Schaden am Material, kein Fehler des Programms.
+Sie zählt deshalb nicht als Fehler und ändert den Rückgabewert nicht, steht aber
+in der Zusammenfassung und im Bericht.
+
+Ein Hinweis zu `+md5` bei Sequenzen: die Prüfsumme wird nur über den ersten
+Frame gebildet, nicht über die ganze Rolle. Sie ist eine Kennung, kein Nachweis.
+Für den Nachweis ist `md5er` da, der jede Datei einzeln behandelt.
+
 ### Weitere Optionen
 
 ```bash
@@ -194,9 +234,14 @@ Zeile je Datei:
 NICHT-VIDEO    /Volumes/Archiv/2024/Ablauf.pdf              [keine bekannte Videoendung]
 AUSGELASSEN    /Volumes/Archiv/2024/._Band17.mov            [versteckte Datei]
 AUSGELASSEN    /Volumes/Archiv/2024/Proxy                   [Ordner passt auf ein +exclude-Muster]
-ERLEDIGT  /Volumes/Archiv/2024/Band03.mxf              [in einem früheren Lauf erledigt]
+ERLEDIGT       /Volumes/Archiv/2024/Band03.mxf              [in einem früheren Lauf erledigt]
 FEHLER         /Volumes/Archiv/2024/Band17.mov              [ffprobe konnte die Datei nicht lesen]
+FRAMES-FEHLEN  /Volumes/Archiv/Rolle_01/scan_[000001-014400].dpx   [5 Frames fehlen: 000005, 000010-000013]
 ```
+
+Der Bericht kommt jetzt auch dann, wenn gar nichts gefunden wurde. Bis 3.3.0
+stieg das Programm mit „Keine Videodateien gefunden" aus, bevor der Bericht
+überhaupt geöffnet war — ausgerechnet in dem Fall, in dem man ihn braucht.
 
 Am Ende des Berichts steht dieselbe Bilanz noch einmal in Zahlen, dazu
 Datenmenge, Laufzeit, Tempo und Durchsatz. Damit steht der Bericht für sich und
@@ -524,12 +569,42 @@ Verknüpfungen überspringt und im Protokoll vermerkt.
 
 ## Erkannte Endungen
 
+Video, eine Datei ist ein Eintrag:
+
 `.mp4 .mov .avi .mpg .mpeg .mkv .wmv .flv .webm .m4v .3gp .asf .mxf .mts .m2ts
 .dv .vob .ts .m2v .ogv .rm`
 
 Die neun letzten kamen mit 3.1.0 dazu. MXF und MTS/M2TS sind in Fernseh- und
 Kameraarchiven verbreitet; vorher tauchte solches Material im Ergebnis nicht auf,
 ohne dass eine Meldung darauf hinwies.
+
+Einzelbilder, eine ganze Sequenz ist ein Eintrag:
+
+`.dpx .tif .tiff .exr .j2c .j2k .jp2 .cin`
+
+Dazugekommen mit 3.4.0. Vorher waren DPX-Scans für das Programm nicht vorhanden:
+ein reiner DPX-Ordner meldete „Keine Videodateien gefunden".
+
+## Sequenzen
+
+Zusammen gehört, was denselben Ordner, denselben Namensanfang, dieselbe Endung
+und dieselbe Stellenzahl teilt. Die Stellenzahl gehört bewusst in den Schlüssel:
+`scan_1.dpx` und `scan_000001.dpx` sind in der Praxis zwei verschiedene
+Sequenzen, keine Lücke in einer.
+
+Im Speicher liegt ein Eintrag je Sequenz mit Zähler, kleinster und größter
+Nummer, Gesamtgröße und dem Pfad des ersten Frames. Die Frames selbst werden nie
+gesammelt, sonst wäre das Speicherproblem von 3.0.2 zurück. Bei 30.000 Frames in
+zehn Rollen bleibt es bei 2 MB Spitzenspeicher.
+
+Für die Lückenprüfung reicht deshalb zunächst der Vergleich
+`max - min + 1 == Anzahl`. Nur wenn er nicht aufgeht, wird der betroffene Ordner
+ein zweites Mal gelesen, um zu benennen, welche Nummern fehlen. Ab 200.000
+Frames wird nur noch die Anzahl gemeldet, und je Sequenz werden höchstens 50
+fehlende Bereiche aufgezählt.
+
+Die Sequenzen werden erst am Ende des Durchlaufs ausgewertet. Vorher steht nicht
+fest, wie viele Frames zu welcher Rolle gehören.
 
 ## Nicht umgesetzt
 
@@ -593,6 +668,11 @@ rclone 1.75. Bash 5. Geprüft wurden CSV-, JSON- und XML-Ausgabe gegen die
 jeweiligen Parser, Dateinamen mit Leerzeichen und Anführungszeichen, Abbruch und
 Wiederaufnahme, Wiederaufnahme mit abweichenden Einstellungen, der Bericht mit
 allen fünf Kategorien sowie ein Trockenlauf über 55 000 Dateien.
+
+Für Bildsequenzen: DPX, TIFF und ein Einzelbild ohne Nummer im selben Lauf,
+verschiedene Stellenzahlen nebeneinander, gerissene Lücken aus einem einzelnen
+Frame und aus einem Bereich, Wiederaufnahme mitten in den Sequenzen, sowie
+30.000 Frames in zehn Rollen (10 Zeilen, 0,55 Sekunden, 2 MB).
 
 Für `lfs_umzug`: Papierkorb bei überschriebenen Dateien, vertauschte Argumente,
 Ziel innerhalb der Quelle und umgekehrt, fehlende Quelle, nicht eingebundenes
