@@ -182,7 +182,7 @@ Zeile je Datei:
 NICHT-VIDEO    /Volumes/Archiv/2024/Ablauf.pdf              [keine bekannte Videoendung]
 AUSGELASSEN    /Volumes/Archiv/2024/._Band17.mov            [versteckte Datei]
 AUSGELASSEN    /Volumes/Archiv/2024/Proxy                   [Ordner passt auf ein +exclude-Muster]
-UEBERSPRUNGEN  /Volumes/Archiv/2024/Band03.mxf              [in einem früheren Lauf erledigt]
+ERLEDIGT  /Volumes/Archiv/2024/Band03.mxf              [in einem früheren Lauf erledigt]
 FEHLER         /Volumes/Archiv/2024/Band17.mov              [ffprobe konnte die Datei nicht lesen]
 ```
 
@@ -234,7 +234,7 @@ Rückgabewert des Programms ist dann 1.
 
 Umlaute in Excel falsch: die CSV-Datei wird mit Byte-Order-Mark und Semikolon als
 Trennzeichen geschrieben, damit Excel und Numbers sie ohne Nacharbeit richtig
-öffnen. Wird sie trotzdem falsch dargestellt, hilft in Excel der Weg über
+övnen. Wird sie trotzdem falsch dargestellt, hilft in Excel der Weg über
 Daten, Aus Text/CSV, dort UTF-8 und Semikolon wählen.
 
 ## lfs_umzug
@@ -260,11 +260,11 @@ Fassung wandert vorher in `.lfs_papierkorb_<zeitstempel>` neben dem Ziel.
   Nach:  /Volumes/NAS_neu/Sendungen
 
   Dateien in der Quelle: 4.812
-  Gesamtgroesse:         6,4 TB
+  Gesamtgröße:         6,4 TB
   Frei am Ziel:          11,2 TB
 
   [WARNUNG]   Der Zielordner ist NICHT leer. Es liegt bereits etwas darin.
-  Gleichnamige Dateien werden ueberschrieben, alles andere bleibt.
+  Gleichnamige Dateien werden überschrieben, alles andere bleibt.
   Papierkorb:  /Volumes/NAS_neu/.lfs_papierkorb_20240314T101500
   Protokoll:   /Volumes/NAS_neu/umzug_20240314T101500.log
 ════════════════════════════════════════════════════════════
