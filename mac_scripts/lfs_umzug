@@ -1,0 +1,669 @@
+#!/bin/bash
+#
+# Zieht einen Bestand von einem NAS auf ein anderes. Aufsatz auf rclone.
+#
+# Es wird nur kopiert. Weder im Ziel noch in der Quelle wird etwas geloescht.
+# Ueberschriebene Dateien landen in einem Papierkorb neben dem Ziel.
+#
+# Ein Skript fuer Manuel vom Haus des Dokumentarfilms
+# Autor: Andreas Kasper <andreas.kasper@goo1.de>
+
+set -u
+
+VERSION="v1.0.260827"
+
+UPDATER_NAME="update-andiscripts.sh"
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+# Systemdateien, die auf dem Ziel wertlos sind. Dieselbe Menge, die md5er und
+# md5check auch auslassen, damit alle vier Programme denselben Bestand sehen.
+JUNK_PATTERNS=(
+  ".DS_Store"
+  "._*"
+  ".Trashes/**"
+  ".Spotlight-V100/**"
+  ".fseventsd/**"
+  ".TemporaryItems/**"
+  ".DocumentRevisions-V100/**"
+  ".apdisk"
+  "Thumbs.db"
+  "Thumbs.db.md5"
+  "desktop.ini"
+  "desktop.ini.md5"
+  ".lfs_papierkorb_*/**"
+)
+
+# ================ EINSTELLUNGEN AUS DEN ARGUMENTEN ================
+SRC=""
+DEST=""
+OPT_YES=0
+OPT_DRY=0
+OPT_MD5=0
+OPT_VERIFY=0
+OPT_TRASH=1
+OPT_JUNK=1
+OPT_QUIET=0
+OPT_LOG=1
+OPT_LIMIT=""
+OPT_PARALLEL=""
+
+show_help() {
+  cat <<'EOF'
+Verwendung: lfs_umzug <QUELLE> <ZIEL> [optionen]
+
+Kopiert einen Bestand von einem Ordner in einen anderen, zum Beispiel von einem
+NAS auf ein anderes. Beide Ordner sind normale Pfade, so wie der Finder sie
+zeigt:
+
+  lfs_umzug /Volumes/NAS_alt/Sendungen /Volumes/NAS_neu/Sendungen
+
+Es wird ausschliesslich kopiert. Im Ziel wird nichts geloescht, in der Quelle
+erst recht nicht. Vorhandene Dateien im Ziel werden ueberschrieben, die alte
+Fassung wandert vorher in einen Papierkorb neben dem Ziel.
+
+Vor dem Start zeigt das Programm Quelle, Ziel, Dateizahl, Gesamtgroesse und
+freien Platz und fragt nach. Wer Quelle und Ziel vertauscht hat, sieht es dort.
+
+Ein abgebrochener Lauf braucht keine Sonderbehandlung: einfach denselben Befehl
+noch einmal aufrufen, es geht weiter, wo es aufgehoert hat.
+
+Optionen:
+  +ja               Nicht nachfragen, sofort loslegen
+  +dry              Trockenlauf, zeigt nur was passieren wuerde
+  +md5              Pruefsummen: md5er legt fehlende .md5-Dateien in der QUELLE
+                    an, sie reisen mit, danach prueft md5check das ZIEL.
+                    Geprueft wird damit gegen Werte von VOR dem Transport.
+  +verify           rclone vergleicht Quelle und Ziel nach dem Kopieren.
+                    Braucht keine .md5-Dateien, liest dafuer beide Seiten.
+  +chucknorris      Kein Papierkorb. Ueberschriebene Dateien sind dann weg.
+  +alles            Auch Systemdateien mitnehmen (.DS_Store, ._*, Thumbs.db …)
+  +quiet            Ohne Fortschrittsbalken, fuer Laeufe im Hintergrund
+  +limit=WERT       Bandbreite bremsen, z.B. +limit=50M
+                    Auch mit Zeitplan: +limit="08:00,20M 18:00,off"
+  +parallel=N       Wie viele Dateien gleichzeitig, Voreinstellung 4
+  -report           Kein Protokoll schreiben
+
+Weitere Befehle:
+  --help, -h        Diese Hilfe
+  --version, -v     Versionsinformationen
+  update            Alle Skripte aktualisieren
+
+Ausgelassen werden nur die bekannten System- und Muelldateien, nicht jeder
+versteckte Ordner. Ein selbst angelegter Ordner wie .eingang zieht also mit um.
+md5er legt fuer versteckte Ordner allerdings keine Pruefsummen an, deren Inhalt
+kommt bei +md5 also ungeprueft am Ziel an.
+
+Was neben dem Ziel angelegt wird:
+  umzug_<zeitstempel>.log             Protokoll, jede uebertragene Datei
+  .lfs_papierkorb_<zeitstempel>/      ueberschriebene alte Fassungen
+Ein leer gebliebener Papierkorb wird am Ende wieder entfernt.
+
+Rueckgabewert:
+  0  alles uebertragen, und falls geprueft wurde, war die Pruefung sauber
+  1  Abbruch, Uebertragungsfehler oder Pruefung nicht bestanden
+
+Der empfohlene Ablauf fuer einen Archivumzug:
+  lfs_umzug /Volumes/NAS_alt/Sendungen /Volumes/NAS_neu/Sendungen +md5
+Damit hat jede Datei am Ziel eine Pruefsumme, die vor dem Transport entstanden
+ist, und md5check bestaetigt sie. Spaeter laesst sich der Bestand jederzeit mit
+  md5check /Volumes/NAS_neu/Sendungen
+erneut nachweisen.
+
+rclone-Remotes (nas2:ordner) funktionieren auch, dann entfallen aber die
+Vorabpruefungen auf Platz und Erreichbarkeit, und das Programm sagt das.
+EOF
+}
+
+show_version() {
+  echo "lfs_umzug $VERSION"
+  if command -v rclone >/dev/null 2>&1; then
+    echo "rclone: $(rclone version 2>/dev/null | head -1)"
+  else
+    echo "rclone: nicht installiert"
+  fi
+}
+
+run_update() {
+  local candidate
+  for candidate in \
+    "$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$UPDATER_NAME" \
+    "/usr/local/bin/$UPDATER_NAME" \
+    "/opt/homebrew/bin/$UPDATER_NAME" \
+    "$(command -v "$UPDATER_NAME" 2>/dev/null)"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      exec "$candidate"
+    fi
+  done
+
+  echo "$UPDATER_NAME nicht gefunden." >&2
+  echo "Bitte einmalig manuell installieren, siehe README.md im Repository." >&2
+  exit 1
+}
+
+fehler() {
+  printf "${RED}[FEHLER]${NC} %s\n" "$1" >&2
+}
+
+warnung() {
+  printf "${YELLOW}[WARNUNG]${NC} %s\n" "$1"
+}
+
+# Bytes lesbar machen, ohne bc oder python.
+menschlich() {
+  local b="${1:-0}"
+  if [ "$b" -lt 1024 ] 2>/dev/null; then echo "$b Byte"; return; fi
+  local units=(KB MB GB TB PB)
+  local i=0 val="$b"
+  while [ "$val" -ge 1048576 ] && [ "$i" -lt 4 ]; do
+    val=$((val / 1024))
+    i=$((i + 1))
+  done
+  # val liegt jetzt zwischen 1024 und 1048575, eine Nachkommastelle reicht
+  echo "$((val / 1024)),$(( (val % 1024) * 10 / 1024 )) ${units[$i]}"
+}
+
+# Ein Pfad der Form "name:unterordner" ist ein rclone-Remote, kein Ordner.
+ist_remote() {
+  case "$1" in
+    /*) return 1 ;;
+    *)
+      local kopf="${1%%/*}"
+      case "$kopf" in
+        *:*) return 0 ;;
+      esac
+      return 1
+      ;;
+  esac
+}
+
+# ================ ARGUMENTE ================
+# Mit while und shift statt "for arg in "$@"": das Bash 3.2 auf dem Mac stolpert
+# unter set -u ueber ein leeres "$@".
+if [ "$#" -eq 0 ]; then
+  show_help
+  exit 1
+fi
+
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h|help|\?) show_help; exit 0 ;;
+    --version|-v|version) show_version; exit 0 ;;
+    update|upgrade) run_update ;;
+  esac
+done
+
+if [ "$#" -lt 2 ]; then
+  fehler "Es fehlt ein Ordner. Gebraucht werden Quelle und Ziel."
+  echo "  lfs_umzug /Volumes/NAS_alt/Sendungen /Volumes/NAS_neu/Sendungen" >&2
+  echo "Hilfe mit: lfs_umzug --help" >&2
+  exit 1
+fi
+
+SRC="$1"
+DEST="$2"
+shift 2
+
+while [ "$#" -gt 0 ]; do
+  arg="$1"
+  shift
+  case "$arg" in
+    +ja|+yes)      OPT_YES=1 ;;
+    +dry)          OPT_DRY=1 ;;
+    +md5)          OPT_MD5=1 ;;
+    +verify)       OPT_VERIFY=1 ;;
+    +chucknorris)  OPT_TRASH=0 ;;
+    +alles)        OPT_JUNK=0 ;;
+    +quiet)        OPT_QUIET=1 ;;
+    -report)       OPT_LOG=0 ;;
+    +limit=*)      OPT_LIMIT="${arg#+limit=}" ;;
+    +parallel=*)   OPT_PARALLEL="${arg#+parallel=}" ;;
+    *)
+      fehler "Unbekannte Option: $arg"
+      echo "Hilfe mit: lfs_umzug --help" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ -n "$OPT_PARALLEL" ]; then
+  case "$OPT_PARALLEL" in
+    ''|*[!0-9]*) fehler "+parallel= braucht eine Zahl, nicht '$OPT_PARALLEL'"; exit 1 ;;
+  esac
+  if [ "$OPT_PARALLEL" -lt 1 ]; then
+    fehler "+parallel= muss mindestens 1 sein"
+    exit 1
+  fi
+fi
+
+# ================ VORAUSSETZUNGEN ================
+if ! command -v rclone >/dev/null 2>&1; then
+  fehler "rclone ist nicht installiert."
+  echo "Installieren mit:  brew install rclone" >&2
+  exit 1
+fi
+
+SRC_REMOTE=0
+DEST_REMOTE=0
+ist_remote "$SRC"  && SRC_REMOTE=1
+ist_remote "$DEST" && DEST_REMOTE=1
+
+# Ohne Remotes braucht rclone keine Konfigurationsdatei. Die Meldung darueber
+# sieht aber nach einem Fehler aus, deshalb in dem Fall unterdruecken.
+if [ "$SRC_REMOTE" -eq 0 ] && [ "$DEST_REMOTE" -eq 0 ]; then
+  export RCLONE_CONFIG=/dev/null
+fi
+
+# ================ QUELLE PRUEFEN ================
+if [ "$SRC_REMOTE" -eq 0 ]; then
+  if [ ! -d "$SRC" ]; then
+    fehler "Quellordner gibt es nicht: $SRC"
+    echo "Ist das NAS im Finder eingebunden?" >&2
+    exit 1
+  fi
+  if [ ! -r "$SRC" ]; then
+    fehler "Quellordner ist nicht lesbar: $SRC"
+    exit 1
+  fi
+  SRC="$(cd "$SRC" && pwd)"
+  if [ -z "$(ls -A "$SRC" 2>/dev/null)" ]; then
+    fehler "Quellordner ist leer: $SRC"
+    echo "Bei einem nicht eingebundenen NAS sieht der Ordner genauso aus." >&2
+    exit 1
+  fi
+fi
+
+# ================ ZIEL PRUEFEN ================
+DEST_ERSTELLT=0
+if [ "$DEST_REMOTE" -eq 0 ]; then
+  if [ -e "$DEST" ] && [ ! -d "$DEST" ]; then
+    fehler "Das Ziel ist eine Datei, kein Ordner: $DEST"
+    exit 1
+  fi
+
+  if [ ! -d "$DEST" ]; then
+    DEST_PARENT_ROH="$(dirname "$DEST")"
+    if [ ! -d "$DEST_PARENT_ROH" ]; then
+      fehler "Weder das Ziel noch der Ordner darueber gibt es: $DEST"
+      echo "Das sieht danach aus, dass das Ziel-NAS nicht eingebunden ist." >&2
+      echo "Bitte im Finder verbinden und den Befehl erneut aufrufen." >&2
+      exit 1
+    fi
+
+    if [ "$OPT_DRY" -eq 1 ]; then
+      # Ein Trockenlauf legt nichts an, auch keinen Ordner.
+      DEST="$(cd "$DEST_PARENT_ROH" && pwd)/$(basename "$DEST")"
+      DEST_ERSTELLT=2
+    else
+      echo "Der Zielordner gibt es noch nicht: $DEST"
+      if [ "$OPT_YES" -eq 1 ]; then
+        antwort="j"
+      else
+        read -r -p "Jetzt anlegen? (j/N) " antwort
+      fi
+      case "$antwort" in
+        j|J|ja|Ja|y|Y|yes)
+          mkdir -p "$DEST" || { fehler "Zielordner liess sich nicht anlegen."; exit 1; }
+          DEST_ERSTELLT=1
+          DEST="$(cd "$DEST" && pwd)"
+          ;;
+        *) echo "Abgebrochen."; exit 1 ;;
+      esac
+    fi
+  else
+    if [ ! -w "$DEST" ]; then
+      fehler "Zielordner ist nicht beschreibbar: $DEST"
+      exit 1
+    fi
+    DEST="$(cd "$DEST" && pwd)"
+  fi
+fi
+
+# Im Trockenlauf wird auch kein Protokoll geschrieben, sonst stimmt die Zusage
+# "es wird nichts geschrieben" nicht.
+if [ "$OPT_DRY" -eq 1 ]; then
+  OPT_LOG=0
+fi
+
+# Fuer df und die Papierkorb-Pruefung: existiert das Ziel noch nicht, muss der
+# Ordner darueber herhalten.
+DF_PFAD="$DEST"
+if [ "$DEST_ERSTELLT" -eq 2 ]; then
+  DF_PFAD="$(dirname "$DEST")"
+fi
+
+# ================ QUELLE UND ZIEL GEGENEINANDER ================
+if [ "$SRC_REMOTE" -eq 0 ] && [ "$DEST_REMOTE" -eq 0 ]; then
+  if [ "$SRC" = "$DEST" ]; then
+    fehler "Quelle und Ziel sind derselbe Ordner."
+    exit 1
+  fi
+  # Praefixvergleich ueber ${var#"..."} statt case-Muster: sonst wuerden
+  # eckige Klammern oder Sternchen im Ordnernamen als Suchmuster gelesen.
+  if [ "${DEST#"$SRC"/}" != "$DEST" ]; then
+    fehler "Das Ziel liegt innerhalb der Quelle."
+    echo "  Quelle: $SRC" >&2
+    echo "  Ziel:   $DEST" >&2
+    echo "Das Programm wuerde sich selbst in die Quelle hineinkopieren." >&2
+    exit 1
+  fi
+  if [ "${SRC#"$DEST"/}" != "$SRC" ]; then
+    fehler "Die Quelle liegt innerhalb des Ziels."
+    echo "  Quelle: $SRC" >&2
+    echo "  Ziel:   $DEST" >&2
+    exit 1
+  fi
+fi
+
+# ================ NAMEN FUER PROTOKOLL UND PAPIERKORB ================
+STAMP="$(date '+%Y%m%dT%H%M%S')"
+
+if [ "$DEST_REMOTE" -eq 1 ]; then
+  case "$DEST" in
+    *:*/*) TRASH="$(dirname "$DEST")/.lfs_papierkorb_$STAMP" ;;
+    *)     TRASH="${DEST%%:*}:.lfs_papierkorb_$STAMP" ;;
+  esac
+  # rclone schreibt sein Protokoll immer lokal.
+  LOG="$(pwd)/umzug_$STAMP.log"
+else
+  DEST_PARENT="$(dirname "$DEST")"
+  TRASH="$DEST_PARENT/.lfs_papierkorb_$STAMP"
+  LOG="$DEST_PARENT/umzug_$STAMP.log"
+fi
+
+# rclone verbietet einen Papierkorb innerhalb des Ziels, deshalb liegt er
+# daneben. Ist das Ziel ein Volume-Wurzelordner, landet "daneben" aber auf einer
+# anderen Platte - dann wird aus dem Verschieben ein echtes Kopieren, und im
+# schlimmsten Fall laeuft die Systemplatte voll.
+TRASH_ANDERES_VOLUME=0
+if [ "$OPT_TRASH" -eq 1 ] && [ "$DEST_REMOTE" -eq 0 ]; then
+  GERAET_ZIEL="$(df -Pk "$DF_PFAD" 2>/dev/null | awk 'NR==2 {print $1}')"
+  GERAET_PAPIERKORB="$(df -Pk "$DEST_PARENT" 2>/dev/null | awk 'NR==2 {print $1}')"
+  if [ -n "$GERAET_ZIEL" ] && [ -n "$GERAET_PAPIERKORB" ] \
+     && [ "$GERAET_ZIEL" != "$GERAET_PAPIERKORB" ]; then
+    TRASH_ANDERES_VOLUME=1
+  fi
+fi
+
+# ================ UMFANG UND PLATZ ================
+QUELL_DATEIEN=""
+QUELL_BYTES=""
+FREI_BYTES=""
+
+echo "Ermittle den Umfang der Quelle …"
+# Mit denselben Ausschluessen wie der Umzug selbst, sonst nennt die Uebersicht
+# eine Dateizahl, die spaeter niemand wiederfindet.
+SIZE_ARGS=(size "$SRC" --json)
+if [ "$OPT_JUNK" -eq 1 ]; then
+  for muster in "${JUNK_PATTERNS[@]}"; do
+    SIZE_ARGS+=(--exclude "$muster")
+  done
+fi
+SIZE_JSON="$(rclone "${SIZE_ARGS[@]}" 2>/dev/null)"
+if [ -n "$SIZE_JSON" ]; then
+  QUELL_DATEIEN="$(echo "$SIZE_JSON" | sed -n 's/.*"count":\([0-9]*\).*/\1/p')"
+  QUELL_BYTES="$(echo "$SIZE_JSON" | sed -n 's/.*"bytes":\([0-9]*\).*/\1/p')"
+fi
+
+if [ "$DEST_REMOTE" -eq 0 ]; then
+  FREI_KB="$(df -Pk "$DF_PFAD" 2>/dev/null | awk 'NR==2 {print $4}')"
+  case "${FREI_KB:-}" in
+    ''|*[!0-9]*) FREI_BYTES="" ;;
+    *) FREI_BYTES=$((FREI_KB * 1024)) ;;
+  esac
+fi
+
+ZIEL_LEER=1
+if [ "$DEST_REMOTE" -eq 0 ] && [ -n "$(ls -A "$DEST" 2>/dev/null)" ]; then
+  ZIEL_LEER=0
+fi
+
+# ================ UEBERSICHT ================
+echo
+echo "════════════════════════════════════════════════════════════"
+echo "  Umzug"
+echo "════════════════════════════════════════════════════════════"
+echo "  Von:   $SRC"
+echo "  Nach:  $DEST"
+echo
+if [ -n "$QUELL_DATEIEN" ]; then
+  echo "  Dateien in der Quelle: $QUELL_DATEIEN"
+  echo "  Gesamtgroesse:         $(menschlich "${QUELL_BYTES:-0}")"
+else
+  warnung "  Umfang der Quelle liess sich nicht ermitteln."
+fi
+if [ -n "$FREI_BYTES" ]; then
+  echo "  Frei am Ziel:          $(menschlich "$FREI_BYTES")"
+fi
+echo
+
+if [ "$DEST_ERSTELLT" -eq 1 ]; then
+  echo "  Der Zielordner wurde neu angelegt."
+elif [ "$DEST_ERSTELLT" -eq 2 ]; then
+  echo "  Den Zielordner gibt es noch nicht, er wuerde angelegt."
+elif [ "$DEST_REMOTE" -eq 0 ] && [ "$ZIEL_LEER" -eq 0 ]; then
+  warnung "  Der Zielordner ist NICHT leer. Es liegt bereits etwas darin."
+  echo "  Gleichnamige Dateien werden ueberschrieben, alles andere bleibt."
+fi
+
+if [ "$SRC_REMOTE" -eq 1 ] || [ "$DEST_REMOTE" -eq 1 ]; then
+  warnung "  Mindestens ein Pfad ist ein rclone-Remote."
+  echo "  Pruefungen auf Erreichbarkeit, Platz und Verschachtelung entfallen."
+fi
+
+if [ "$OPT_TRASH" -eq 1 ]; then
+  echo "  Papierkorb:  $TRASH"
+  if [ "$TRASH_ANDERES_VOLUME" -eq 1 ]; then
+    warnung "  Der Papierkorb liegt auf einem anderen Volume als das Ziel."
+    echo "  Ueberschriebene Dateien werden dorthin kopiert statt verschoben."
+    echo "  Bei einem Ziel wie /Volumes/NAS/Ordner statt /Volumes/NAS faellt das weg."
+    echo "  Alternativ +chucknorris, dann gibt es gar keinen Papierkorb."
+  fi
+else
+  warnung "  Kein Papierkorb (+chucknorris). Ueberschriebene Dateien sind weg."
+fi
+if [ "$OPT_LOG" -eq 1 ]; then
+  echo "  Protokoll:   $LOG"
+elif [ "$OPT_DRY" -eq 1 ]; then
+  echo "  Protokoll:   keins, im Trockenlauf wird nichts geschrieben"
+else
+  echo "  Protokoll:   aus (-report)"
+fi
+if [ "$OPT_JUNK" -eq 1 ]; then
+  echo "  Systemdateien wie .DS_Store und ._* bleiben zurueck."
+else
+  echo "  Auch Systemdateien werden mitgenommen (+alles)."
+fi
+if [ -n "$OPT_LIMIT" ]; then
+  echo "  Bandbreite:  $OPT_LIMIT"
+fi
+if [ -n "$OPT_PARALLEL" ]; then
+  echo "  Gleichzeitig: $OPT_PARALLEL Dateien"
+fi
+if [ "$OPT_MD5" -eq 1 ]; then
+  echo "  +md5: fehlende .md5-Dateien werden in der QUELLE angelegt,"
+  echo "        danach prueft md5check das Ziel."
+fi
+if [ "$OPT_VERIFY" -eq 1 ]; then
+  echo "  +verify: rclone vergleicht danach Quelle und Ziel."
+fi
+if [ "$OPT_DRY" -eq 1 ]; then
+  echo
+  echo "  TROCKENLAUF: es wird nichts geschrieben."
+fi
+echo "════════════════════════════════════════════════════════════"
+
+# Platzwarnung erst nach der Uebersicht, damit sie direkt vor der Frage steht.
+if [ -n "$FREI_BYTES" ] && [ -n "$QUELL_BYTES" ] && [ "$QUELL_BYTES" -gt "$FREI_BYTES" ]; then
+  echo
+  warnung "Am Ziel sind weniger als $(menschlich "$QUELL_BYTES") frei."
+  echo "Wenn im Ziel schon ein Teil des Bestandes liegt, kann es trotzdem reichen."
+fi
+
+if [ "$OPT_YES" -eq 0 ]; then
+  echo
+  read -r -p "Weiter? (j/N) " antwort
+  case "$antwort" in
+    j|J|ja|Ja|y|Y|yes) ;;
+    *) echo "Abgebrochen."; exit 1 ;;
+  esac
+fi
+
+# ================ PRUEFSUMMEN IN DER QUELLE ================
+if [ "$OPT_MD5" -eq 1 ] && [ "$OPT_DRY" -eq 0 ]; then
+  if command -v md5er >/dev/null 2>&1; then
+    echo
+    echo "👨‍💻 Lege fehlende Pruefsummen in der Quelle an …"
+    if ! md5er "$SRC"; then
+      warnung "md5er meldete Probleme. Der Umzug laeuft trotzdem weiter."
+    fi
+  else
+    warnung "md5er nicht gefunden, Pruefsummen werden nicht angelegt."
+    OPT_MD5=0
+  fi
+fi
+
+# ================ RCLONE AUFRUFEN ================
+RCLONE_ARGS=(copy "$SRC" "$DEST" --create-empty-src-dirs)
+
+if [ "$OPT_QUIET" -eq 1 ]; then
+  RCLONE_ARGS+=(--stats 1m --stats-one-line)
+else
+  RCLONE_ARGS+=(--progress)
+fi
+
+if [ "$OPT_LOG" -eq 1 ]; then
+  RCLONE_ARGS+=(--log-file "$LOG" --log-level INFO)
+fi
+
+if [ "$OPT_TRASH" -eq 1 ]; then
+  RCLONE_ARGS+=(--backup-dir "$TRASH")
+fi
+
+if [ "$OPT_JUNK" -eq 1 ]; then
+  for muster in "${JUNK_PATTERNS[@]}"; do
+    RCLONE_ARGS+=(--exclude "$muster")
+  done
+fi
+
+[ -n "$OPT_LIMIT" ]    && RCLONE_ARGS+=(--bwlimit "$OPT_LIMIT")
+[ -n "$OPT_PARALLEL" ] && RCLONE_ARGS+=(--transfers "$OPT_PARALLEL")
+[ "$OPT_DRY" -eq 1 ]   && RCLONE_ARGS+=(--dry-run)
+
+echo
+echo "👨‍💻 Kopiere …"
+START_ZEIT="$(date '+%Y-%m-%d %H:%M:%S')"
+START_SEK="$(date '+%s')"
+
+rclone "${RCLONE_ARGS[@]}"
+RCLONE_RC=$?
+
+ENDE_SEK="$(date '+%s')"
+DAUER=$((ENDE_SEK - START_SEK))
+
+# ================ PAPIERKORB AUFRAEUMEN ================
+PAPIERKORB_INHALT=0
+if [ "$OPT_TRASH" -eq 1 ] && [ "$DEST_REMOTE" -eq 0 ] && [ -d "$TRASH" ]; then
+  if [ -z "$(ls -A "$TRASH" 2>/dev/null)" ]; then
+    rmdir "$TRASH" 2>/dev/null
+  else
+    PAPIERKORB_INHALT=1
+  fi
+fi
+
+# ================ PRUEFUNG ================
+PRUEFUNG_RC=0
+PRUEFUNG_GELAUFEN=0
+
+if [ "$OPT_DRY" -eq 0 ] && [ "$RCLONE_RC" -eq 0 ] && [ "$OPT_VERIFY" -eq 1 ]; then
+  echo
+  echo "👨‍💻 Vergleiche Quelle und Ziel …"
+  CHECK_ARGS=(check "$SRC" "$DEST" --one-way)
+  if [ "$OPT_JUNK" -eq 1 ]; then
+    for muster in "${JUNK_PATTERNS[@]}"; do
+      CHECK_ARGS+=(--exclude "$muster")
+    done
+  fi
+  if rclone "${CHECK_ARGS[@]}"; then
+    printf "${GREEN}Vergleich sauber: das Ziel enthaelt alles aus der Quelle.${NC}\n"
+  else
+    printf "${RED}Vergleich nicht bestanden.${NC}\n"
+    PRUEFUNG_RC=1
+  fi
+  PRUEFUNG_GELAUFEN=1
+fi
+
+if [ "$OPT_DRY" -eq 0 ] && [ "$RCLONE_RC" -eq 0 ] && [ "$OPT_MD5" -eq 1 ]; then
+  if command -v md5check >/dev/null 2>&1; then
+    echo
+    echo "👨‍💻 Pruefe die Pruefsummen am Ziel …"
+    if ! md5check "$DEST"; then
+      PRUEFUNG_RC=1
+    fi
+    PRUEFUNG_GELAUFEN=1
+  else
+    warnung "md5check nicht gefunden, das Ziel wurde nicht geprueft."
+  fi
+fi
+
+# ================ ZUSAMMENFASSUNG ================
+echo
+echo "=== Zusammenfassung ==="
+echo "Von:      $SRC"
+echo "Nach:     $DEST"
+echo "Start:    $START_ZEIT"
+echo "Ende:     $(date '+%Y-%m-%d %H:%M:%S')"
+if [ "$DAUER" -lt 60 ]; then
+  echo "Dauer:    ${DAUER}s"
+elif [ "$DAUER" -lt 3600 ]; then
+  echo "Dauer:    $((DAUER / 60))m $((DAUER % 60))s"
+else
+  echo "Dauer:    $((DAUER / 3600))h $(((DAUER % 3600) / 60))m $((DAUER % 60))s"
+fi
+
+if [ "$OPT_LOG" -eq 1 ] && [ -f "$LOG" ]; then
+  echo "Protokoll: $LOG"
+fi
+if [ "$PAPIERKORB_INHALT" -eq 1 ]; then
+  echo "Papierkorb: $TRASH"
+  echo "  Dort liegen die alten Fassungen ueberschriebener Dateien."
+  echo "  Wenn die Pruefung sauber war, kann der Ordner weg."
+fi
+
+if [ "$OPT_DRY" -eq 1 ]; then
+  echo
+  echo "Das war ein Trockenlauf. Es wurde nichts geschrieben."
+  exit 0
+fi
+
+if [ "$RCLONE_RC" -ne 0 ]; then
+  echo
+  printf "${RED}Der Umzug ist nicht sauber durchgelaufen.${NC}\n"
+  echo "Denselben Befehl noch einmal aufrufen, es wird dort weitergemacht,"
+  echo "wo es aufgehoert hat. Was schiefging, steht im Protokoll."
+  exit 1
+fi
+
+if [ "$PRUEFUNG_RC" -ne 0 ]; then
+  echo
+  printf "${RED}Uebertragen, aber die Pruefung ist nicht sauber.${NC}\n"
+  echo "Die Quelle bitte auf keinen Fall anfassen, bevor das geklaert ist."
+  exit 1
+fi
+
+echo
+if [ "$PRUEFUNG_GELAUFEN" -eq 1 ]; then
+  printf "${GREEN}Umzug abgeschlossen und geprueft.${NC}\n"
+else
+  printf "${GREEN}Umzug abgeschlossen.${NC}\n"
+  echo "Nicht geprueft. Ein Nachweis geht mit:"
+  echo "  lfs_umzug \"$SRC\" \"$DEST\" +md5"
+  echo "oder, wenn schon Pruefsummen vorliegen:"
+  echo "  md5check \"$DEST\""
+fi
+
+exit 0
