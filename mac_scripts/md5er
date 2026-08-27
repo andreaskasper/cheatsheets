@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Erzeugt fuer jede Datei eine .md5-Datei mit ihrer Pruefsumme.
+# Erzeugt für jede Datei eine .md5-Datei mit ihrer Prüfsumme.
 #
-# Ein Skript fuer Manuel vom Haus des Dokumentarfilms
+# Ein Skript für Manuel vom Haus des Dokumentarfilms
 # Autor: Andreas Kasper <andreas.kasper@goo1.de>
 # Seit 2023-10-03
 
@@ -16,22 +16,22 @@ show_help() {
   cat <<'EOF'
 Verwendung: md5er [ORDNER]
 
-Erzeugt fuer alle Dateien im angegebenen Ordner (rekursiv) eine .md5-Datei mit
-der MD5-Pruefsumme der Datei. Bestehende .md5-Dateien werden uebersprungen, ein
+Erzeugt für alle Dateien im angegebenen Ordner (rekursiv) eine .md5-Datei mit
+der MD5-Prüfsumme der Datei. Bestehende .md5-Dateien werden übersprungen, ein
 zweiter Lauf kostet also fast nichts.
 
 Versteckte Dateien und Ordner werden ausgelassen.
 
-Ohne Angabe eines Ordners wird der aktuelle Ordner verwendet, nach Rueckfrage.
+Ohne Angabe eines Ordners wird der aktuelle Ordner verwendet, nach Rückfrage.
 
 Optionen:
   --help      Diese Hilfe
   --version   Versionsinformationen
   update      Alle Skripte aktualisieren
 
-Rueckgabewert:
+Rückgabewert:
   0  alles erzeugt oder schon vorhanden
-  1  mindestens eine Pruefsumme liess sich nicht schreiben
+  1  mindestens eine Prüfsumme ließ sich nicht schreiben
 EOF
 }
 
@@ -57,7 +57,7 @@ run_update() {
   exit 1
 }
 
-# Auf dem Mac heisst der Befehl md5, anderswo md5sum. Beide liefern denselben
+# Auf dem Mac heißt der Befehl md5, anderswo md5sum. Beide liefern denselben
 # Wert, nur in unterschiedlicher Formatierung.
 if command -v md5 >/dev/null 2>&1; then
   hash_file() { md5 -q "$1"; }
@@ -95,7 +95,7 @@ else
 fi
 
 if [ ! -d "$TARGET_DIR" ]; then
-  echo "Fehler: '$TARGET_DIR' ist kein gueltiger Ordner." >&2
+  echo "Fehler: '$TARGET_DIR' ist kein gültiger Ordner." >&2
   exit 1
 fi
 
@@ -109,10 +109,10 @@ created=0
 existing=0
 errors=0
 
-# -mindepth 1 sorgt dafuer, dass der Startordner selbst nie gegen '.*' geprueft
-# wird. Ohne das wuerde 'md5er .' den ganzen Baum ueberspringen.
-# -print0 wegen Dateinamen mit Leerzeichen oder Umbruechen.
-# Prozesssubstitution statt Pipe, sonst zaehlen die Zaehler in einer Subshell
+# -mindepth 1 sorgt dafür, dass der Startordner selbst nie gegen '.*' geprüft
+# wird. Ohne das würde 'md5er .' den ganzen Baum überspringen.
+# -print0 wegen Dateinamen mit Leerzeichen oder Umbrüchen.
+# Prozesssubstitution statt Pipe, sonst zählen die Zähler in einer Subshell
 # und die Bilanz am Ende bliebe leer.
 while IFS= read -r -d '' FILE; do
   HASH_FILE="${FILE}.md5"
@@ -126,13 +126,13 @@ while IFS= read -r -d '' FILE; do
   echo "🧮 $FILE"
 
   # Erst in eine Nebendatei schreiben. Bricht die Berechnung ab oder ist das
-  # Volume schreibgeschuetzt, bleibt keine leere .md5 zurueck.
+  # Volume schreibgeschützt, bleibt keine leere .md5 zurück.
   if hash_file "$FILE" > "$HASH_FILE.tmp" 2>/dev/null && [ -s "$HASH_FILE.tmp" ]; then
     mv -f "$HASH_FILE.tmp" "$HASH_FILE"
     created=$((created + 1))
   else
     rm -f "$HASH_FILE.tmp"
-    echo "   Pruefsumme konnte nicht geschrieben werden." >&2
+    echo "   Prüfsumme konnte nicht geschrieben werden." >&2
     errors=$((errors + 1))
   fi
 done < <(find "$TARGET_DIR" -mindepth 1 \( -name '.*' -prune \) -o \

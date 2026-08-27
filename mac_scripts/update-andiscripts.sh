@@ -2,7 +2,7 @@
 #
 # Holt die Mac-Hilfsskripte frisch von GitHub und legt sie nach /usr/local/bin.
 #
-# Ein Skript fuer Manuel vom Haus des Dokumentarfilms
+# Ein Skript für Manuel vom Haus des Dokumentarfilms
 # Autor: Andreas Kasper <andreas.kasper@goo1.de>
 
 set -u
@@ -29,7 +29,7 @@ show_help() {
   cat <<'EOF'
 Verwendung: update-andiscripts.sh [optionen]
 
-Laedt die aktuellen Fassungen der Hilfsskripte von GitHub und installiert sie
+Lädt die aktuellen Fassungen der Hilfsskripte von GitHub und installiert sie
 nach /usr/local/bin. Bereits vorhandene Fassungen werden ersetzt.
 
 Optionen:
@@ -37,10 +37,10 @@ Optionen:
   --version   Versionsinformationen
 
 Installiert werden:
-  md5er                  Pruefsummen erzeugen
-  md5check               Pruefsummen kontrollieren
+  md5er                  Prüfsummen erzeugen
+  md5check               Prüfsummen kontrollieren
   lfs_files2csv          Video-Metadaten in eine Tabelle schreiben
-  lfs_umzug              Bestaende von einem NAS auf ein anderes kopieren
+  lfs_umzug              Bestände von einem NAS auf ein anderes kopieren
   update-andiscripts.sh  dieses Skript
 
 Braucht Schreibrechte auf /usr/local/bin. Fehlen sie, fragt das Skript nach und
@@ -72,7 +72,7 @@ case "${1:-}" in
 esac
 
 # Eigener absoluter Pfad, damit der Neustart mit sudo auch dann klappt, wenn das
-# Skript ueber einen relativen Pfad aufgerufen wurde.
+# Skript über einen relativen Pfad aufgerufen wurde.
 SELF="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 
 if [ ! -d "$TARGET_DIR" ]; then
@@ -118,22 +118,22 @@ for script in "${SCRIPTS[@]}"; do
   tmp_file="$WORK_DIR/$script"
 
   if ! curl -sSfL "$BASE_URL/$script" -o "$tmp_file"; then
-    echo "  ❌ fehlgeschlagen, $script bleibt unveraendert." >&2
+    echo "  ❌ fehlgeschlagen, $script bleibt unverändert." >&2
     failed=$((failed + 1))
     continue
   fi
 
   # Ein abgebrochener Download liefert oft eine kurze oder leere Datei, die
-  # trotzdem ausfuehrbar waere. Deshalb vor dem Installieren pruefen.
+  # trotzdem ausführbar wäre. Deshalb vor dem Installieren prüfen.
   size=$(wc -c < "$tmp_file" | tr -d ' ')
   if [ "$size" -lt "$MIN_BYTES" ]; then
-    echo "  ⚠️ Datei ist nur $size Byte gross, das sieht nach Abbruch aus. Uebersprungen." >&2
+    echo "  ⚠️ Datei ist nur $size Byte groß, das sieht nach Abbruch aus. Übersprungen." >&2
     failed=$((failed + 1))
     continue
   fi
 
   if ! head -c 2 "$tmp_file" | grep -q '#!'; then
-    echo "  ⚠️ Datei beginnt nicht mit #!, das ist kein Skript. Uebersprungen." >&2
+    echo "  ⚠️ Datei beginnt nicht mit #!, das ist kein Skript. Übersprungen." >&2
     failed=$((failed + 1))
     continue
   fi
@@ -141,8 +141,8 @@ for script in "${SCRIPTS[@]}"; do
   chmod +x "$tmp_file"
 
   # mv ersetzt den Verzeichniseintrag in einem Schritt. Ein bereits laufendes
-  # Skript behaelt seine alte Fassung geoeffnet, deshalb darf sich dieses
-  # Skript hier auch selbst ueberschreiben.
+  # Skript behält seine alte Fassung geöffnet, deshalb darf sich dieses
+  # Skript hier auch selbst überschreiben.
   if mv -f "$tmp_file" "$TARGET_DIR/$script"; then
     echo "  ✅ installiert nach $TARGET_DIR/$script"
     installed=$((installed + 1))
@@ -155,7 +155,7 @@ done
 echo
 echo "Installiert: $installed, fehlgeschlagen: $failed"
 
-# Voraussetzungen pruefen. Die Skripte selbst laufen, ihre Werkzeuge fehlen aber.
+# Voraussetzungen prüfen. Die Skripte selbst laufen, ihre Werkzeuge fehlen aber.
 missing=""
 command -v php >/dev/null 2>&1    || missing="$missing php"
 command -v ffprobe >/dev/null 2>&1 || missing="$missing ffprobe"
@@ -165,13 +165,13 @@ if [ -n "$missing" ]; then
   echo
   echo "⚠️ Es fehlen noch:$missing"
   case "$missing" in
-    *php*) echo "  php     fuer lfs_files2csv:  brew install php" ;;
+    *php*) echo "  php     für lfs_files2csv:  brew install php" ;;
   esac
   case "$missing" in
-    *ffprobe*) echo "  ffprobe fuer lfs_files2csv:  brew install ffmpeg" ;;
+    *ffprobe*) echo "  ffprobe für lfs_files2csv:  brew install ffmpeg" ;;
   esac
   case "$missing" in
-    *rclone*) echo "  rclone  fuer lfs_umzug:      brew install rclone" ;;
+    *rclone*) echo "  rclone  für lfs_umzug:      brew install rclone" ;;
   esac
 fi
 

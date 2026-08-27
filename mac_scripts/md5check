@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Prueft Dateien gegen die von md5er erzeugten .md5-Dateien.
+# Prüft Dateien gegen die von md5er erzeugten .md5-Dateien.
 #
-# Ein Skript fuer Manuel vom Haus des Dokumentarfilms
+# Ein Skript für Manuel vom Haus des Dokumentarfilms
 # Autor: Andreas Kasper <andreas.kasper@goo1.de>
 # Seit 2023-10-03
 
@@ -21,9 +21,9 @@ show_help() {
   cat <<'EOF'
 Verwendung: md5check [ORDNER]
 
-Prueft alle Dateien im angegebenen Ordner rekursiv gegen ihre .md5-Dateien.
-Meldet eine Warnung, wenn die Pruefsumme fehlt, und einen Fehler, wenn sie nicht
-uebereinstimmt. Am Ende steht eine Bilanz.
+Prüft alle Dateien im angegebenen Ordner rekursiv gegen ihre .md5-Dateien.
+Meldet eine Warnung, wenn die Prüfsumme fehlt, und einen Fehler, wenn sie nicht
+übereinstimmt. Am Ende steht eine Bilanz.
 
 Versteckte Dateien und Ordner werden ausgelassen, genau wie bei md5er.
 
@@ -32,12 +32,12 @@ Optionen:
   --version   Versionsinformationen
   update      Alle Skripte aktualisieren
 
-Rueckgabewert:
-  0  alle geprueften Dateien stimmen und keine Pruefsumme fehlt
-  1  mindestens eine Pruefsumme fehlt oder weicht ab
+Rückgabewert:
+  0  alle geprüften Dateien stimmen und keine Prüfsumme fehlt
+  1  mindestens eine Prüfsumme fehlt oder weicht ab
 
-Der Rueckgabewert ist wichtig, wenn md5check in einem groesseren Ablauf laeuft:
-nur so laesst sich eine Kopie automatisch als sauber oder fehlerhaft bewerten.
+Der Rückgabewert ist wichtig, wenn md5check in einem größeren Ablauf läuft:
+nur so lässt sich eine Kopie automatisch als sauber oder fehlerhaft bewerten.
 EOF
 }
 
@@ -99,7 +99,7 @@ else
 fi
 
 if [ ! -d "$TARGET_DIR" ]; then
-  echo "Fehler: '$TARGET_DIR' ist kein gueltiger Ordner." >&2
+  echo "Fehler: '$TARGET_DIR' ist kein gültiger Ordner." >&2
   exit 1
 fi
 
@@ -141,8 +141,8 @@ done < <(find "$TARGET_DIR" -mindepth 1 \( -name '.*' -prune \) -o \
   -type f ! -name '*.md5' ! -name '*.md5.tmp' -print0)
 
 echo
-echo "Geprueft und in Ordnung: $ok"
-echo "Ohne Pruefsumme: $missing"
+echo "Geprüft und in Ordnung: $ok"
+echo "Ohne Prüfsumme: $missing"
 echo "Abweichend: $mismatch"
 echo "Fertig: $(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -152,7 +152,7 @@ if [ "$mismatch" -gt 0 ]; then
 fi
 
 if [ "$missing" -gt 0 ]; then
-  printf "${YELLOW}Ergebnis: unvollstaendig, es fehlen Pruefsummen${NC}\n"
+  printf "${YELLOW}Ergebnis: unvollständig, es fehlen Prüfsummen${NC}\n"
   exit 1
 fi
 
