@@ -7,7 +7,7 @@
 
 set -u
 
-VERSION="v1.1.260827"
+VERSION="v1.2.260827"
 
 TARGET_DIR="/usr/local/bin"
 BASE_URL="https://raw.githubusercontent.com/andreaskasper/cheatsheets/refs/heads/master/mac_scripts"
@@ -111,12 +111,12 @@ failed=0
 installed=0
 
 for script in "${SCRIPTS[@]}"; do
-  echo "Lade $script ..."
+  echo "👨‍💻 Lade $script …"
 
   tmp_file="$WORK_DIR/$script"
 
   if ! curl -sSfL "$BASE_URL/$script" -o "$tmp_file"; then
-    echo "  fehlgeschlagen, $script bleibt unveraendert." >&2
+    echo "  ❌ fehlgeschlagen, $script bleibt unveraendert." >&2
     failed=$((failed + 1))
     continue
   fi
@@ -125,13 +125,13 @@ for script in "${SCRIPTS[@]}"; do
   # trotzdem ausfuehrbar waere. Deshalb vor dem Installieren pruefen.
   size=$(wc -c < "$tmp_file" | tr -d ' ')
   if [ "$size" -lt "$MIN_BYTES" ]; then
-    echo "  Datei ist nur $size Byte gross, das sieht nach Abbruch aus. Uebersprungen." >&2
+    echo "  ⚠️ Datei ist nur $size Byte gross, das sieht nach Abbruch aus. Uebersprungen." >&2
     failed=$((failed + 1))
     continue
   fi
 
   if ! head -c 2 "$tmp_file" | grep -q '#!'; then
-    echo "  Datei beginnt nicht mit #!, das ist kein Skript. Uebersprungen." >&2
+    echo "  ⚠️ Datei beginnt nicht mit #!, das ist kein Skript. Uebersprungen." >&2
     failed=$((failed + 1))
     continue
   fi
@@ -142,10 +142,10 @@ for script in "${SCRIPTS[@]}"; do
   # Skript behaelt seine alte Fassung geoeffnet, deshalb darf sich dieses
   # Skript hier auch selbst ueberschreiben.
   if mv -f "$tmp_file" "$TARGET_DIR/$script"; then
-    echo "  installiert nach $TARGET_DIR/$script"
+    echo "  ✅ installiert nach $TARGET_DIR/$script"
     installed=$((installed + 1))
   else
-    echo "  konnte nicht nach $TARGET_DIR verschoben werden." >&2
+    echo "  ❌ konnte nicht nach $TARGET_DIR verschoben werden." >&2
     failed=$((failed + 1))
   fi
 done
@@ -160,7 +160,7 @@ command -v ffprobe >/dev/null 2>&1 || missing="$missing ffprobe"
 
 if [ -n "$missing" ]; then
   echo
-  echo "Hinweis: lfs_files2csv braucht noch:$missing"
+  echo "⚠️ Hinweis: lfs_files2csv braucht noch:$missing"
   case "$missing" in
     *ffprobe*) echo "  ffprobe ist Teil von ffmpeg:  brew install ffmpeg" ;;
   esac
@@ -169,7 +169,7 @@ if [ -n "$missing" ]; then
   esac
 fi
 
-echo "Update abgeschlossen: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "🕰️ Update abgeschlossen: $(date '+%Y-%m-%d %H:%M:%S')"
 
 if [ "$failed" -gt 0 ]; then
   exit 1
