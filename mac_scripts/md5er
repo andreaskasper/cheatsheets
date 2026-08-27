@@ -1,74 +1,151 @@
 #!/bin/bash
-
-# Eine Script für Manuel vom Haus des Dokumentarfilms
-# erstellt md5 Checksum Dateien für alle Dateien in einem Ordner
-# und überspringt bereits vorhandene md5 Dateien
+#
+# Erzeugt fuer jede Datei eine .md5-Datei mit ihrer Pruefsumme.
+#
+# Ein Skript fuer Manuel vom Haus des Dokumentarfilms
 # Autor: Andreas Kasper <andreas.kasper@goo1.de>
-# Datum: 2023-10-03
-# Version: 1.0
+# Seit 2023-10-03
+
+set -u
+
+VERSION="v1.1.260827"
+
+UPDATER_NAME="update-andiscripts.sh"
 
 show_help() {
-  echo "Verwendung: md5er [ORDNER]"
-  echo
-  echo "Erzeugt für alle Dateien im angegebenen Ordner (rekursiv) eine .md5-Datei"
-  echo "mit dem MD5-Hash der Datei. Bestehende .md5-Dateien werden übersprungen."
-  echo
-  echo "Wenn kein ORDNER angegeben ist, wird der aktuelle Ordner verwendet (mit Rückfrage)."
-  echo
-  echo "Optionen:"
-  echo "  --help     Zeigt diese Hilfe an"
-  echo "  update     Führt ein Update auf um das Script zu aktualisieren"
-  echo
-  echo "Version: v0.1.250901"
+  cat <<'EOF'
+Verwendung: md5er [ORDNER]
+
+Erzeugt fuer alle Dateien im angegebenen Ordner (rekursiv) eine .md5-Datei mit
+der MD5-Pruefsumme der Datei. Bestehende .md5-Dateien werden uebersprungen, ein
+zweiter Lauf kostet also fast nichts.
+
+Versteckte Dateien und Ordner werden ausgelassen.
+
+Ohne Angabe eines Ordners wird der aktuelle Ordner verwendet, nach Rueckfrage.
+
+Optionen:
+  --help      Diese Hilfe
+  --version   Versionsinformationen
+  update      Alle Skripte aktualisieren
+
+Rueckgabewert:
+  0  alles erzeugt oder schon vorhanden
+  1  mindestens eine Pruefsumme liess sich nicht schreiben
+EOF
 }
 
-# Hilfe anzeigen
-if [[ "$1" == "--help" ]]; then
-  show_help
-  exit 0
+show_version() {
+  echo "md5er $VERSION"
+}
+
+run_update() {
+  local candidate
+  for candidate in \
+    "$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$UPDATER_NAME" \
+    "/usr/local/bin/$UPDATER_NAME" \
+    "/opt/homebrew/bin/$UPDATER_NAME" \
+    "$(command -v "$UPDATER_NAME" 2>/dev/null)"
+  do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      exec "$candidate"
+    fi
+  done
+
+  echo "$UPDATER_NAME nicht gefunden." >&2
+  echo "Bitte einmalig manuell installieren, siehe README.md im Repository." >&2
+  exit 1
+}
+
+# Auf dem Mac heisst der Befehl md5, anderswo md5sum. Beide liefern denselben
+# Wert, nur in unterschiedlicher Formatierung.
+if command -v md5 >/dev/null 2>&1; then
+  hash_file() { md5 -q "$1"; }
+elif command -v md5sum >/dev/null 2>&1; then
+  hash_file() { md5sum "$1" | awk '{print $1}'; }
+else
+  echo "Weder md5 noch md5sum gefunden." >&2
+  exit 1
 fi
 
-# Wenn das erste Argument "update" ist, führe update-andiscripts.sh aus und beende das Script
-if [[ "$1" == "update" || "$1" == "upgrade" ]]; then
-  ./update-andiscripts.sh
-  exit $?
-fi
+case "${1:-}" in
+  --help|-h|help|\?)
+    show_help
+    exit 0
+    ;;
+  --version|-v|version)
+    show_version
+    exit 0
+    ;;
+  update|upgrade)
+    run_update
+    ;;
+esac
 
-# Ordner festlegen
-if [ -z "$1" ]; then
+if [ -z "${1:-}" ]; then
   echo "Kein Ordner angegeben."
-  echo "Aktuellen Ordner verwenden: $(pwd)? (y/n)"
-  read -r choice
-  if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
-    echo "Abgebrochen."
-    exit 1
-  fi
+  read -r -p "Aktuellen Ordner verwenden: $(pwd)? (j/N) " choice
+  case "$choice" in
+    j|J|ja|Ja|y|Y|yes) ;;
+    *) echo "Abgebrochen."; exit 1 ;;
+  esac
   TARGET_DIR="$(pwd)"
 else
   TARGET_DIR="$1"
 fi
 
-# Prüfen, ob Ordner existiert
 if [ ! -d "$TARGET_DIR" ]; then
-  echo "Fehler: '$TARGET_DIR' ist kein gültiger Ordner."
+  echo "Fehler: '$TARGET_DIR' ist kein gueltiger Ordner." >&2
   exit 1
 fi
 
+# Auf einen absoluten Pfad bringen, damit die Ausgabe eindeutig ist.
+TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+
 echo "🕰️ Start: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "Ordner: $TARGET_DIR"
 
-# Dateien verarbeiten
-find "$TARGET_DIR" -type d -name '.*' -prune -o -type f ! -name '*.md5' -print | while read -r FILE; do
-    BASENAME=$(basename "$FILE")
-    if [[ "$BASENAME" == .* ]]; then
-        continue  # überspringe versteckte Dateien
-    fi
-    HASH_FILE="${FILE}.md5"
-    if [ ! -f "$HASH_FILE" ]; then
-        echo "🧮 $FILE"
-        md5 -q "$FILE" > "$HASH_FILE"
-    else
-        echo "⬇️ $FILE schon vorhanden"
-    fi
-done
+created=0
+existing=0
+errors=0
 
+# -mindepth 1 sorgt dafuer, dass der Startordner selbst nie gegen '.*' geprueft
+# wird. Ohne das wuerde 'md5er .' den ganzen Baum ueberspringen.
+# -print0 wegen Dateinamen mit Leerzeichen oder Umbruechen.
+# Prozesssubstitution statt Pipe, sonst zaehlen die Zaehler in einer Subshell
+# und die Bilanz am Ende bliebe leer.
+while IFS= read -r -d '' FILE; do
+  HASH_FILE="${FILE}.md5"
+
+  if [ -f "$HASH_FILE" ]; then
+    echo "⬇️ $FILE schon vorhanden"
+    existing=$((existing + 1))
+    continue
+  fi
+
+  echo "🧮 $FILE"
+
+  # Erst in eine Nebendatei schreiben. Bricht die Berechnung ab oder ist das
+  # Volume schreibgeschuetzt, bleibt keine leere .md5 zurueck.
+  if hash_file "$FILE" > "$HASH_FILE.tmp" 2>/dev/null && [ -s "$HASH_FILE.tmp" ]; then
+    mv -f "$HASH_FILE.tmp" "$HASH_FILE"
+    created=$((created + 1))
+  else
+    rm -f "$HASH_FILE.tmp"
+    echo "   Pruefsumme konnte nicht geschrieben werden." >&2
+    errors=$((errors + 1))
+  fi
+done < <(find "$TARGET_DIR" -mindepth 1 \( -name '.*' -prune \) -o \
+  -type f ! -name '*.md5' ! -name '*.md5.tmp' -print0)
+
+echo
+echo "Neu erzeugt: $created"
+echo "Schon vorhanden: $existing"
+echo "Fehler: $errors"
 echo "Fertig: $(date '+%Y-%m-%d %H:%M:%S')"
+
+if [ "$errors" -gt 0 ]; then
+  exit 1
+fi
+
+exit 0
