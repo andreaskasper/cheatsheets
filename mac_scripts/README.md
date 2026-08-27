@@ -143,6 +143,7 @@ lfs_files2csv /Volumes/Archiv/2024 +md5            # MD5 und SHA1 mitberechnen
 lfs_files2csv /Volumes/Archiv/2024 +json           # JSON statt CSV
 lfs_files2csv /Volumes/Archiv/2024 +xml            # XML statt CSV
 lfs_files2csv /Volumes/Archiv/2024 +raw            # rohe ffprobe-Ausgabe als Spalte
+lfs_files2csv /Volumes/Archiv/2024 +report         # auflisten, was nicht erfasst wurde
 lfs_files2csv /Volumes/Archiv/2024 +dry            # nur zeigen, was passieren würde
 lfs_files2csv /Volumes/Archiv/2024 +exclude=Proxy  # Pfade mit "Proxy" auslassen
 lfs_files2csv /Volumes/Archiv/2024 +quiet          # nur das Nötigste ausgeben
@@ -152,6 +153,52 @@ lfs_files2csv /Volumes/Archiv/2024 +verbose        # ausführlich
 `+md5` liest jede Datei komplett von der Platte. Bei einem Terabyte Material
 dauert das je nach Anbindung Stunden, unabhängig vom Detailgrad. `+exclude=` darf
 mehrfach angegeben werden.
+
+### Welche Dateien nicht in der Tabelle stehen
+
+Die Zusammenfassung am Ende sagt, wie viele Dateien nicht erfasst wurden:
+
+```
+Dateien insgesamt: 123
+Videodateien: 117
+Verarbeitet: 116
+Übersprungen: 0
+Fehler: 1
+Nicht erfasst: 6 (5 ohne Videoendung, 1 versteckt)
+```
+
+Welche sechs das sind, sagt `+report`:
+
+```bash
+lfs_files2csv /Volumes/Archiv/2024 +report
+```
+
+Neben der Tabelle liegt danach `archiv_JJJJMMTTThhmmss.bericht.txt` mit einer
+Zeile je Datei:
+
+```
+NICHT-VIDEO    /Volumes/Archiv/2024/Ablauf.pdf              [keine bekannte Videoendung]
+AUSGELASSEN    /Volumes/Archiv/2024/._Band17.mov            [versteckte Datei]
+AUSGELASSEN    /Volumes/Archiv/2024/Proxy                   [Ordner passt auf ein +exclude-Muster]
+UEBERSPRUNGEN  /Volumes/Archiv/2024/Band03.mxf              [in einem früheren Lauf erledigt]
+FEHLER         /Volumes/Archiv/2024/Band17.mov              [ffprobe konnte die Datei nicht lesen]
+```
+
+Am Ende des Berichts steht dieselbe Bilanz noch einmal in Zahlen. Wer nur die
+Problemfälle sehen will:
+
+```bash
+grep FEHLER /Volumes/Archiv/archiv_20240314T101500.bericht.txt
+```
+
+`+dry +report` ist die schnelle Vorabprüfung: es wird keine Tabelle geschrieben,
+aber man sieht vorher, was der richtige Lauf auslassen würde. Das lohnt sich vor
+einem Durchgang, der Stunden dauert.
+
+`FEHLER` heißt fast immer: die Datei ist beschädigt oder unvollständig kopiert.
+`NICHT-VIDEO` sind Beilagen wie Textdateien, Bilder oder PDFs. Taucht dort
+Material auf, das eigentlich Video ist, fehlt seine Endung in der Liste weiter
+unten, und das gehört ins Skript ergänzt.
 
 ### Abgebrochenen Lauf fortsetzen
 
@@ -256,6 +303,22 @@ speichert. Auf langsamen Netzlaufwerken kostet das etwas Zeit vor dem Start.
 Sicherheitsgurt für einzelne sehr große ffprobe-Ausgaben und nicht mehr, um ein
 strukturelles Problem zu überdecken.
 
+## Bericht
+
+`+report` hängt jede aussortierte Datei sofort an die Berichtsdatei an, statt
+sie zu sammeln und am Ende auszugeben. Sonst wäre über den Umweg der Liste genau
+das Speicherproblem zurück, das oben beschrieben ist. Gemessen an 55 000 Dateien
+mit 5000 Nicht-Video-Dateien: unverändert 2 MB Spitzenspeicher, der Bericht ist
+428 KB groß.
+
+Die Datei wird angehängt, nicht überschrieben. Bei `+resume` steht der Bericht
+des abgebrochenen Laufs also weiterhin darin, jeder Lauf beginnt mit einem
+eigenen Kopf.
+
+Aussortiert wird an zwei Stellen: Ordner beim Betreten (versteckt, Symlink,
+`+exclude`), Dateien beim Prüfen der Endung. Der Zähldurchlauf am Anfang schreibt
+nichts in den Bericht und erhöht keine Zähler, sonst stünde alles doppelt drin.
+
 ## Spalten
 
 Die Spalten sind an genau einer Stelle definiert, in `getColumns()`. Kopfzeile,
@@ -322,8 +385,8 @@ kein funktionierendes Skript.
 PHP 8.1 und 8.5, jeweils mit `error_reporting=E_ALL` ohne Meldungen. ffprobe 4.4.
 Bash 5. Geprüft wurden CSV-, JSON- und XML-Ausgabe gegen die jeweiligen Parser,
 Dateinamen mit Leerzeichen und Anführungszeichen, Abbruch und Wiederaufnahme,
-Wiederaufnahme mit abweichenden Einstellungen sowie ein Trockenlauf über
-50 000 Dateien.
+Wiederaufnahme mit abweichenden Einstellungen, der Bericht mit allen fünf
+Kategorien sowie ein Trockenlauf über 55 000 Dateien.
 
 Nicht automatisch geprüft werden konnte, was nur auf macOS auftritt: das
 BSD-`md5`, das Verhalten von `sudo` und die Rechtesituation auf `/usr/local/bin`.
