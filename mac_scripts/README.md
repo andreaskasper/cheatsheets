@@ -118,9 +118,21 @@ je nach Detailgrad noch einiges mehr.
 lfs_files2csv /Volumes/Archiv/2024
 ```
 
-Die Ergebnisdatei heißt `archiv_JJJJMMTTThhmmss.csv` und landet im
-übergeordneten Ordner des durchsuchten Ordners, im Beispiel also in
-`/Volumes/Archiv/`. Das durchsuchte Material selbst wird nie angefasst.
+Die Ergebnisdatei heißt `archiv_JJJJMMTTThhmmss.csv` und landet im durchsuchten
+Ordner selbst, im Beispiel also in `/Volumes/Archiv/2024/`. Damit bleibt die
+Auswertung beim Material. Ausgaben früherer Läufe erkennt das Programm und zählt
+sie nicht noch einmal mit.
+
+Während des Zählens läuft ein Kringel mit, damit man sieht, dass sich etwas tut:
+
+```
+⠹ Zähle … 12.480 Dateien (3.211 Video)   …/Archiv/2024/Sendung_03
+```
+
+Der Ordner am Ende der Zeile ist der, in dem das Programm gerade steckt. Auf
+einem NAS über SMB sieht man daran, ob ein einzelner großer Ordner alles
+ausbremst. Läuft die Ausgabe in eine Datei statt auf den Bildschirm, kommt
+stattdessen alle 25.000 Dateien eine Zeile mit dem Zwischenstand.
 
 ### Detailgrad
 
@@ -186,8 +198,29 @@ ERLEDIGT  /Volumes/Archiv/2024/Band03.mxf              [in einem früheren Lauf 
 FEHLER         /Volumes/Archiv/2024/Band17.mov              [ffprobe konnte die Datei nicht lesen]
 ```
 
-Am Ende des Berichts steht dieselbe Bilanz noch einmal in Zahlen. Wer nur die
-Problemfälle sehen will:
+Am Ende des Berichts steht dieselbe Bilanz noch einmal in Zahlen, dazu
+Datenmenge, Laufzeit, Tempo und Durchsatz. Damit steht der Bericht für sich und
+muss nicht neben dem Bildschirmprotokoll gelesen werden:
+
+```
+  Dateien insgesamt:        4.812
+  Videodateien:             4.520
+  Verarbeitet:              4.519
+  Übersprungen:             0
+  Fehler:                   1
+  Nicht erfasst:            292
+    keine Videoendung:      288
+    versteckte Dateien:     4
+  Ausgelassene Ordner:      3
+
+  Datenmenge:               6,41 TB
+  Laufzeit:                 2h 14m 8s
+  Tempo:                    0,56 Dateien/Sekunde
+  Durchschnitt je Datei:    1,78 Sekunden
+  Durchsatz:                835,12 MB/Sekunde
+```
+
+Wer nur die Problemfälle sehen will:
 
 ```bash
 grep FEHLER /Volumes/Archiv/archiv_20240314T101500.bericht.txt
@@ -393,6 +426,43 @@ speichert. Auf langsamen Netzlaufwerken kostet das etwas Zeit vor dem Start.
 Sicherheitsgurt für einzelne sehr große ffprobe-Ausgaben und nicht mehr, um ein
 strukturelles Problem zu überdecken.
 
+## Ablageort und eigene Ausgaben
+
+Seit 3.3.0 liegen Tabelle, Bericht und Fortschrittsdatei im durchsuchten Ordner
+statt daneben. Das hat eine Folge, die mitbedacht werden muss: beim nächsten
+Lauf über denselben Ordner stünde die Tabelle des letzten Laufs im Bestand.
+`istEigeneAusgabe()` erkennt sie am Namensaufbau `archiv_JJJJMMTTThhmmss` mit
+`.csv`, `.json`, `.xml` oder `.bericht.txt`, und nur direkt im durchsuchten
+Ordner, nicht in Unterordnern. Sie zählt weder im Zähldurchlauf noch bei der
+Verarbeitung mit und taucht im Bericht als `AUSGELASSEN` auf.
+
+Der Zeitstempel im Dateinamen ist auf die Sekunde genau. Zwei Läufe in derselben
+Sekunde bekommen deshalb `-2`, `-3` und so weiter angehängt. Vorher wurde
+gefragt, ob überschrieben werden soll; diese Rückfrage ließ sich ohne Terminal
+nicht beantworten und blockierte einen Lauf per cron oder nohup.
+
+Ist der Ordner nicht beschreibbar, bricht das Programm gleich zu Beginn ab und
+verweist auf `+dry`.
+
+## Anzeige und Terminal
+
+Zwei Anzeigen laufen mit `\r` in einer Zeile: der Kringel beim Zählen und der
+Balken beim Verarbeiten. Beide prüfen über `stream_isatty(STDOUT)`, ob die
+Ausgabe wirklich auf einem Terminal landet. Bei `lfs_files2csv … > protokoll.txt`
+entstünden sonst zehntausende Zeilen. Statt dessen gibt es dort einen
+Zwischenstand alle 25.000 gezählten beziehungsweise alle 1000 verarbeiteten
+Dateien.
+
+Der Kringel wird höchstens zehnmal je Sekunde neu gezeichnet. Ein `printf` je
+Datei wäre bei 300.000 Dateien teurer als das Zählen selbst. Gezeichnet wird an
+zwei Stellen: bei jeder gezählten Datei und beim Betreten eines Ordners. Ohne
+das zweite stünde der Kringel still, solange ein einzelner großer Ordner
+eingelesen wird und noch keine Datei zurückgekommen ist.
+
+Die Zeilenbreite kommt aus `COLUMNS`, sonst aus `tput cols`, sonst 100. Der
+Ordnerpfad wird von vorn gekürzt, weil die tiefsten Ordner sagen, wo man ist.
+`\033[K` räumt den Zeilenrest auf, statt mit Leerzeichen zu füllen.
+
 ## Bericht
 
 `+report` hängt jede aussortierte Datei sofort an die Berichtsdatei an, statt
@@ -408,6 +478,10 @@ eigenen Kopf.
 Aussortiert wird an zwei Stellen: Ordner beim Betreten (versteckt, Symlink,
 `+exclude`), Dateien beim Prüfen der Endung. Der Zähldurchlauf am Anfang schreibt
 nichts in den Bericht und erhöht keine Zähler, sonst stünde alles doppelt drin.
+
+Die Beschriftungen der Schlussbilanz werden über `mb_strlen` ausgerichtet, nicht
+über handgezählte Leerzeichen. Sonst verrutscht die Spalte bei jedem Umlaut im
+Beschriftungstext, was beim Umstellen auf echte Umlaute auch prompt passiert ist.
 
 ## Spalten
 
